@@ -2,7 +2,7 @@
 
 > Scalable, secure, and decentralized smart contracts for Soroban Stellar.
 
-[![CI](https://github.com/devEunicee/pulsar-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/devEunicee/pulsar-contracts/actions/workflows/ci.yml)
+[![CI](https://github.com/queenannaE/pulsar-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/queenannaE/pulsar-contracts/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Pulsar is a comprehensive payment-processing smart contract for the Stellar Soroban network. It provides merchant management, payment processing with signature verification, refunds, multi-signature payments, and paginated payment history queries — all on-chain.
@@ -122,7 +122,7 @@ pulsar-contracts/
 Clone the repository and run the automated setup script to install all prerequisites (Rust, WASM target, Stellar CLI):
 
 ```bash
-git clone https://github.com/devEunicee/pulsar-contracts.git
+git clone https://github.com/queenannaE/pulsar-contracts.git
 cd pulsar-contracts
 bash scripts/setup.sh
 ```

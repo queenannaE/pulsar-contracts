@@ -6,7 +6,7 @@ rust-version = "1.79.0"
 authors = ["Pulsar Contributors"]
 description = "Scalable, secure, and decentralized payment processing smart contract for Soroban Stellar"
 license = "MIT"
-repository = "https://github.com/devEunicee/pulsar-contracts"
+repository = "https://github.com/queenannaE/pulsar-contracts"
 
 [lib]
 crate-type = ["cdylib"]
