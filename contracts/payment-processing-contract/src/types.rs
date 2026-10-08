@@ -110,16 +110,8 @@ pub struct MultisigPayment {
 }
 
 // ── Subscriptions ───────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SubscriptionState {
-    pub subscription_id: Bytes,
-    pub merchant_address: Address,
-    pub subscriber: Address,
-    pub active: bool,
-    pub created_at: u64,
-}
+// Full SubscriptionState, SubscriptionPlan, SubscriptionStatus definitions
+// are below (search "Subscription" section lower in this file).
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,6 +284,8 @@ pub enum DataKey {
     TokenAllowlistEnabled,
     AllowedToken(Address),
     Subscription(Bytes),
+    /// Index of subscription IDs per merchant for list queries.
+    MerchantSubscriptions(Address),
     MerchantStats(Address),
     // Connection pooling storage keys
     PoolConfig,

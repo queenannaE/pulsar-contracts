@@ -4,11 +4,15 @@
 
 extern crate alloc;
 
+#[cfg(feature = "scaffold")]
 mod archival;
+#[cfg(feature = "scaffold")]
 mod audit;
+#[cfg(feature = "scaffold")]
 mod webhook;
 mod error;
 mod helper;
+#[cfg(feature = "scaffold")]
 mod request_validation;
 mod response_formatting;
 mod storage;
@@ -571,6 +575,17 @@ impl PaymentContract {
         storage::remove_merchant_payment_id(&env, &record.merchant_address, &order_id);
         storage::remove_payer_payment_id(&env, &record.payer, &order_id);
         storage::remove_global_payment_id(&env, &order_id);
+        // Decrement global payment stats so aggregate counts stay accurate.
+        storage::decrement_payment_stats(&env, record.amount);
+        // Walk the global refund index and decrement stats for every completed
+        // refund that was associated with this payment.
+        for rid in storage::get_all_refund_ids(&env).iter() {
+            if let Some(refund) = storage::get_refund(&env, &rid) {
+                if refund.order_id == order_id && refund.status == RefundStatus::Completed {
+                    storage::decrement_refund_stats(&env, refund.amount);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -904,66 +919,10 @@ impl PaymentContract {
     }
 
     /// Mark a refund as Disputed. Callable by payer or merchant while refund is Pending/Approved.
-    pub fn dispute_refund(
-        env: Env,
-        caller: Address,
-        refund_id: Bytes,
-    ) -> Result<(), PaymentError> {
-        caller.require_auth();
-        let mut refund =
-            storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
-
-        let record = storage::get_payment(&env, &refund.order_id)
-            .ok_or(PaymentError::PaymentNotFound)?;
-
-        if caller != record.payer && caller != record.merchant_address {
-            return Err(PaymentError::Unauthorized);
-        }
-        if refund.status == RefundStatus::Completed || refund.status == RefundStatus::Rejected {
-            return Err(PaymentError::RefundAlreadyCompleted);
-        }
-
-        refund.status = RefundStatus::Disputed;
-        storage::save_refund(&env, &refund);
-        env.events().publish(
-            (String::from_str(&env, "refund_disputed"),),
-            refund_id,
-        );
-        Ok(())
-    }
+    // Replaced by the full dispute_refund below (with reason param + proper auth).
 
     /// Admin resolves a disputed refund (approve or reject). Checks dispute_deadline.
-    pub fn resolve_dispute(
-        env: Env,
-        admin: Address,
-        refund_id: Bytes,
-        approve: bool,
-    ) -> Result<(), PaymentError> {
-        helper::require_admin(&env, &admin)?;
-        let mut refund =
-            storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
-
-        if refund.status != RefundStatus::Disputed {
-            return Err(PaymentError::RefundAlreadyCompleted);
-        }
-
-        let now = env.ledger().timestamp();
-        if now > refund.dispute_deadline {
-            return Err(PaymentError::RefundWindowExpired);
-        }
-
-        refund.status = if approve {
-            RefundStatus::Approved
-        } else {
-            RefundStatus::Rejected
-        };
-        storage::save_refund(&env, &refund);
-        env.events().publish(
-            (String::from_str(&env, "dispute_resolved"),),
-            (refund_id, approve),
-        );
-        Ok(())
-    }
+    // Replaced by the full resolve_dispute below (multi-admin aware).
 
     // ── Multi-signature payments ───────────────────────────────────────────────
 
@@ -1312,6 +1271,217 @@ impl PaymentContract {
         }
 
         Ok(PaymentPage {
+            records: page,
+            next_cursor,
+            total,
+        })
+    }
+
+    // ── Subscriptions ──────────────────────────────────────────────────────────
+
+    /// Create a new recurring subscription between a payer and a merchant.
+    ///
+    /// The subscription defines the token, amount, and interval for recurring
+    /// charges. The first payment is not made at creation — it is collected on
+    /// the first call to `process_subscription_payment`.
+    ///
+    /// # Parameters
+    /// - `payer` — The address that will be charged at each interval; must be authenticated.
+    /// - `merchant` — The merchant receiving the recurring payments.
+    /// - `subscription_id` — Caller-supplied unique ID for this subscription.
+    /// - `plan` — Recurring payment terms (token, amount, interval in seconds).
+    ///
+    /// # Errors
+    /// - [`PaymentError::SubscriptionAlreadyExists`] if the ID is already in use.
+    /// - [`PaymentError::MerchantNotFound`] if the merchant is not registered.
+    /// - [`PaymentError::MerchantInactive`] if the merchant has been deactivated.
+    /// - [`PaymentError::InvalidInput`] if `plan.interval` is zero or `plan.amount` ≤ 0.
+    pub fn create_subscription(
+        env: Env,
+        payer: Address,
+        merchant: Address,
+        subscription_id: Bytes,
+        plan: types::SubscriptionPlan,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        payer.require_auth();
+        if plan.interval == 0 {
+            return Err(PaymentError::InvalidInput);
+        }
+        helper::validate_amount(plan.amount)?;
+        if storage::get_subscription(&env, &subscription_id).is_some() {
+            return Err(PaymentError::SubscriptionAlreadyExists);
+        }
+        let m = storage::get_merchant(&env, &merchant).ok_or(PaymentError::MerchantNotFound)?;
+        if !m.active {
+            return Err(PaymentError::MerchantInactive);
+        }
+        let now = env.ledger().timestamp();
+        let sub = types::SubscriptionState {
+            subscription_id: subscription_id.clone(),
+            payer,
+            merchant: merchant.clone(),
+            plan,
+            status: types::SubscriptionStatus::Active,
+            created_at: now,
+            last_charged_at: 0,
+        };
+        storage::save_subscription(&env, &sub);
+        storage::push_merchant_subscription_id(&env, &merchant, &subscription_id);
+        env.events().publish(
+            (String::from_str(&env, "subscription_created"),),
+            subscription_id,
+        );
+        Ok(())
+    }
+
+    /// Cancel an active subscription. Only the payer may cancel.
+    ///
+    /// # Parameters
+    /// - `caller` — Must equal the subscription's payer; must be authenticated.
+    /// - `subscription_id` — The subscription to cancel.
+    ///
+    /// # Errors
+    /// - [`PaymentError::SubscriptionNotFound`] if the ID does not exist.
+    /// - [`PaymentError::Unauthorized`] if `caller` is not the payer.
+    /// - [`PaymentError::SubscriptionNotActive`] if already cancelled.
+    pub fn cancel_subscription(
+        env: Env,
+        caller: Address,
+        subscription_id: Bytes,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        caller.require_auth();
+        let mut sub = storage::get_subscription(&env, &subscription_id)
+            .ok_or(PaymentError::SubscriptionNotFound)?;
+        if caller != sub.payer {
+            return Err(PaymentError::Unauthorized);
+        }
+        if sub.status != types::SubscriptionStatus::Active {
+            return Err(PaymentError::SubscriptionNotActive);
+        }
+        sub.status = types::SubscriptionStatus::Cancelled;
+        storage::save_subscription(&env, &sub);
+        env.events().publish(
+            (String::from_str(&env, "subscription_cancelled"),),
+            subscription_id,
+        );
+        Ok(())
+    }
+
+    /// Collect one recurring payment for an active subscription.
+    ///
+    /// Transfers `plan.amount` of `plan.token` from the payer to the merchant.
+    /// The caller (typically the off-chain scheduler) must be the subscription's
+    /// payer. The interval guard ensures the payment cannot be collected twice
+    /// within the same billing cycle.
+    ///
+    /// # Parameters
+    /// - `caller` — Must equal the subscription's payer; must be authenticated.
+    /// - `subscription_id` — The subscription to charge.
+    ///
+    /// # Errors
+    /// - [`PaymentError::SubscriptionNotFound`] if the ID does not exist.
+    /// - [`PaymentError::SubscriptionNotActive`] if the subscription is cancelled.
+    /// - [`PaymentError::Unauthorized`] if `caller` is not the payer.
+    /// - [`PaymentError::SubscriptionIntervalNotElapsed`] if the interval has not
+    ///   passed since the last successful charge.
+    pub fn process_subscription_payment(
+        env: Env,
+        caller: Address,
+        subscription_id: Bytes,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        caller.require_auth();
+        let mut sub = storage::get_subscription(&env, &subscription_id)
+            .ok_or(PaymentError::SubscriptionNotFound)?;
+        if caller != sub.payer {
+            return Err(PaymentError::Unauthorized);
+        }
+        if sub.status != types::SubscriptionStatus::Active {
+            return Err(PaymentError::SubscriptionNotActive);
+        }
+        let now = env.ledger().timestamp();
+        // Interval guard: last_charged_at == 0 means never charged; first charge
+        // is always allowed. Subsequent charges require the full interval to have
+        // elapsed.
+        if sub.last_charged_at > 0 && now < sub.last_charged_at + sub.plan.interval {
+            return Err(PaymentError::SubscriptionIntervalNotElapsed);
+        }
+        // Transfer funds from payer to merchant before updating state so that a
+        // failed transfer leaves the subscription record unchanged.
+        let token_client = token::Client::new(&env, &sub.plan.token);
+        token_client.transfer(&sub.payer, &sub.merchant, &sub.plan.amount);
+        sub.last_charged_at = now;
+        storage::save_subscription(&env, &sub);
+        env.events().publish(
+            (String::from_str(&env, "subscription_charged"),),
+            (subscription_id, sub.plan.amount),
+        );
+        Ok(())
+    }
+
+    /// Retrieve a single subscription by ID.
+    ///
+    /// # Errors
+    /// - [`PaymentError::SubscriptionNotFound`] if the ID does not exist.
+    pub fn get_subscription(
+        env: Env,
+        subscription_id: Bytes,
+    ) -> Result<types::SubscriptionState, PaymentError> {
+        storage::bump_instance_ttl(&env);
+        storage::get_subscription(&env, &subscription_id)
+            .ok_or(PaymentError::SubscriptionNotFound)
+    }
+
+    /// List all subscriptions for a merchant, with optional cursor-based pagination.
+    ///
+    /// # Parameters
+    /// - `merchant` — The merchant whose subscriptions to list.
+    /// - `cursor` — Opaque cursor from a previous response; omit for the first page.
+    /// - `limit` — Maximum results per page (capped at 100).
+    ///
+    /// # Returns
+    /// A [`types::SubscriptionPage`] containing the records and an optional
+    /// `next_cursor` for the next page.
+    pub fn list_subscriptions_by_merchant(
+        env: Env,
+        merchant: Address,
+        cursor: Option<Bytes>,
+        limit: u32,
+    ) -> Result<types::SubscriptionPage, PaymentError> {
+        storage::bump_instance_ttl(&env);
+        let ids = storage::get_merchant_subscription_ids(&env, &merchant);
+        let cap = (limit.min(100)) as usize;
+        // Collect all subscription records for this merchant.
+        let mut records: alloc::vec::Vec<types::SubscriptionState> = alloc::vec::Vec::new();
+        for id in ids.iter() {
+            if let Some(sub) = storage::get_subscription(&env, &id) {
+                records.push(sub);
+            }
+        }
+        let total = records.len() as u32;
+        // Apply cursor: start after the entry whose subscription_id matches.
+        let start = if let Some(ref cur) = cursor {
+            records
+                .iter()
+                .position(|s| &s.subscription_id == cur)
+                .map(|p| p + 1)
+                .unwrap_or(records.len())
+        } else {
+            0
+        };
+        let slice = &records[start..];
+        let next_cursor = if slice.len() > cap {
+            slice.get(cap - 1).map(|s| s.subscription_id.clone())
+        } else {
+            None
+        };
+        let mut page: Vec<types::SubscriptionState> = Vec::new(&env);
+        for i in 0..(slice.len().min(cap)) {
+            page.push_back(slice[i].clone());
+        }
+        Ok(types::SubscriptionPage {
             records: page,
             next_cursor,
             total,

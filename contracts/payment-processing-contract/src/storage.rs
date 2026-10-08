@@ -140,6 +140,17 @@ pub fn get_merchant_payment_ids(env: &Env, merchant: &Address) -> Vec<Bytes> {
 
 pub fn push_merchant_payment_id(env: &Env, merchant: &Address, order_id: &Bytes) {
     let mut ids = get_merchant_payment_ids(env, merchant);
+    // SC-013: cap the in-contract index to prevent unbounded ledger entry growth.
+    // When the cap is reached, the oldest entry is evicted from the index.
+    // The underlying payment record stays in persistent storage and remains
+    // queryable by order ID; only the paginated history index is capped.
+    if ids.len() >= MAX_PAYMENT_IDS_PER_KEY {
+        let mut trimmed = Vec::new(env);
+        for i in 1..ids.len() {
+            trimmed.push_back(ids.get(i).unwrap());
+        }
+        ids = trimmed;
+    }
     ids.push_back(order_id.clone());
     let key = DataKey::MerchantPayments(merchant.clone());
     env.storage().persistent().set(&key, &ids);
@@ -161,6 +172,14 @@ pub fn get_payer_payment_ids(env: &Env, payer: &Address) -> Vec<Bytes> {
 
 pub fn push_payer_payment_id(env: &Env, payer: &Address, order_id: &Bytes) {
     let mut ids = get_payer_payment_ids(env, payer);
+    // SC-013: same cap as merchant index.
+    if ids.len() >= MAX_PAYMENT_IDS_PER_KEY {
+        let mut trimmed = Vec::new(env);
+        for i in 1..ids.len() {
+            trimmed.push_back(ids.get(i).unwrap());
+        }
+        ids = trimmed;
+    }
     ids.push_back(order_id.clone());
     let key = DataKey::PayerPayments(payer.clone());
     env.storage().persistent().set(&key, &ids);
@@ -409,6 +428,12 @@ pub const DEFAULT_MULTISIG_EXPIRY: u64 = 86_400;
 pub const MAX_SIGNERS: u32 = 10;
 /// Maximum number of pending refunds per order
 pub const MAX_PENDING_REFUNDS: u32 = 10;
+/// Maximum number of payment IDs tracked per merchant or payer in the
+/// in-contract index (SC-013). Older IDs are dropped from the index once the
+/// cap is reached; the full payment records remain in persistent storage and
+/// are still queryable by order ID. Off-chain indexers should be used for
+/// complete history beyond this cap.
+pub const MAX_PAYMENT_IDS_PER_KEY: u32 = 10_000;
 
 pub fn get_cleanup_period(env: &Env) -> u64 {
     env.storage()
@@ -511,6 +536,22 @@ pub fn increment_refund_stats(env: &Env, amount: i128) -> Result<(), PaymentErro
     Ok(())
 }
 
+/// Decrement global payment stats when a payment is archived or rolled back.
+pub fn decrement_payment_stats(env: &Env, amount: i128) {
+    let mut stats = get_global_stats(env);
+    stats.total_payments = stats.total_payments.saturating_sub(1);
+    stats.total_volume = stats.total_volume.saturating_sub(amount);
+    save_global_stats(env, &stats);
+}
+
+/// Decrement global refund stats when a refund record is archived.
+pub fn decrement_refund_stats(env: &Env, amount: i128) {
+    let mut stats = get_global_stats(env);
+    stats.total_refunds = stats.total_refunds.saturating_sub(1);
+    stats.total_refund_volume = stats.total_refund_volume.saturating_sub(amount);
+    save_global_stats(env, &stats);
+}
+
 // ── Subscription ──────────────────────────────────────────────────────────────
 
 pub fn get_subscription(env: &Env, subscription_id: &Bytes) -> Option<SubscriptionState> {
@@ -527,6 +568,29 @@ pub fn get_subscription(env: &Env, subscription_id: &Bytes) -> Option<Subscripti
 pub fn save_subscription(env: &Env, sub: &SubscriptionState) {
     let key = DataKey::Subscription(sub.subscription_id.clone());
     env.storage().persistent().set(&key, sub);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+}
+
+/// Return the list of subscription IDs for a given merchant.
+pub fn get_merchant_subscription_ids(env: &Env, merchant: &Address) -> Vec<Bytes> {
+    let key = DataKey::MerchantSubscriptions(merchant.clone());
+    let result: Option<Vec<Bytes>> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+    }
+    result.unwrap_or_else(|| Vec::new(env))
+}
+
+/// Append a subscription ID to the merchant's subscription index.
+pub fn push_merchant_subscription_id(env: &Env, merchant: &Address, subscription_id: &Bytes) {
+    let mut ids = get_merchant_subscription_ids(env, merchant);
+    ids.push_back(subscription_id.clone());
+    let key = DataKey::MerchantSubscriptions(merchant.clone());
+    env.storage().persistent().set(&key, &ids);
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
