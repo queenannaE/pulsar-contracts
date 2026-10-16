@@ -34,7 +34,7 @@ const MESSAGES = {
   MultisigAlreadyExecuted:    "Multisig payment has already been executed",
   InsufficientSignatures:     "Not all required signers have signed",
   InvalidInput:               "General input validation failure",
-  StorageError:               "Storage operation failed",
+  // StorageError (51) removed — variant was never returned (SC-009).
   ArithmeticError:            "Arithmetic overflow or underflow",
 };
 

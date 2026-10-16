@@ -23,7 +23,7 @@ export enum PulsarErrorCode {
   MultisigAlreadyExecuted    = 42,
   InsufficientSignatures     = 43,
   InvalidInput               = 50,
-  StorageError               = 51,
+  // StorageError = 51 removed (SC-009): was never returned by any code path.
   ArithmeticError            = 52,
 }
 
@@ -49,7 +49,7 @@ const registry: Record<number, string> = {
   42: "Multisig payment has already been executed",
   43: "Not all required signers have signed",
   50: "General input validation failure",
-  51: "Storage operation failed",
+  // 51 (StorageError) removed — see SC-009.
   52: "Arithmetic overflow or underflow",
 };
 

@@ -36,7 +36,7 @@ Versions follow **MAJOR.MINOR.PATCH** semantics:
 - `README.md`: added SDK & Integrator Resources table linking to the SDK, API reference, ABI, and idempotency guide.
 
 ### Changed
-- Remove unused `StorageError` variant from the payment contract ABI.
+- Remove unused `StorageError` (code 51) variant from the payment contract ABI and SDK (`error.rs`, `sdk/errors.ts`, `sdk/error-registry.json`). The variant was never returned by any code path; removing it reduces ABI noise for integrators. Closes #9.
 - Harden payment and refund flows against external token transfer re-entrancy by committing state before external calls.
 - Add best-effort zero/burn admin address validation and test coverage for invalid admin assignment.
 - Add date-filter coverage for `get_global_payment_stats` to cover all-payments and no-payments ranges.

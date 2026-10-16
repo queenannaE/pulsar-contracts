@@ -108,11 +108,6 @@
       "message": "General input validation failure"
     },
     {
-      "code": 51,
-      "name": "StorageError",
-      "message": "Storage operation failed"
-    },
-    {
       "code": 52,
       "name": "ArithmeticError",
       "message": "Arithmetic overflow or underflow"

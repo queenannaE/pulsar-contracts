@@ -44,7 +44,8 @@ pub enum PaymentError {
 
     // General
     InvalidInput = 50,
-    StorageError = 51,
+    // StorageError = 51 was removed: the variant was never returned by any
+    // code path and only inflated the ABI. See issue SC-009.
     ArithmeticError = 52,
 
     // Subscription
