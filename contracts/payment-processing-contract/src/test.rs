@@ -2199,3 +2199,174 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-015: Merchant string field max-length validation ───────────────────────
+
+/// Helper: build a String of exactly `n` ASCII 'a' characters.
+fn repeat_char(env: &Env, ch: char, n: usize) -> String {
+    let s: alloc::string::String = core::iter::repeat(ch).take(n).collect();
+    String::from_str(env, &s)
+}
+
+#[test]
+fn test_register_merchant_name_at_max_succeeds() {
+    // name == 64 bytes → should succeed
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &repeat_char(&env, 'a', 64),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.name.len(), 64);
+}
+
+#[test]
+fn test_register_merchant_name_over_max_fails() {
+    // name == 65 bytes → InvalidInput
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    let result = client.try_register_merchant(
+        &merchant,
+        &repeat_char(&env, 'a', 65),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_register_merchant_description_at_max_succeeds() {
+    // description == 256 bytes → should succeed
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &repeat_char(&env, 'b', 256),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.description.len(), 256);
+}
+
+#[test]
+fn test_register_merchant_description_over_max_fails() {
+    // description == 257 bytes → InvalidInput
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    let result = client.try_register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &repeat_char(&env, 'b', 257),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_register_merchant_contact_info_at_max_succeeds() {
+    // contact_info == 128 bytes → should succeed
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &repeat_char(&env, 'c', 128),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.contact_info.len(), 128);
+}
+
+#[test]
+fn test_register_merchant_contact_info_over_max_fails() {
+    // contact_info == 129 bytes → InvalidInput
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    let result = client.try_register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &repeat_char(&env, 'c', 129),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_update_merchant_name_over_max_fails() {
+    // update_merchant should also enforce max name length
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let result = client.try_update_merchant(
+        &merchant,
+        &repeat_char(&env, 'a', 65),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_update_merchant_description_over_max_fails() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let result = client.try_update_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &repeat_char(&env, 'b', 257),
+        &str(&env, "contact@example.com"),
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_update_merchant_contact_info_over_max_fails() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &str(&env, "contact@example.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let result = client.try_update_merchant(
+        &merchant,
+        &str(&env, "My Store"),
+        &str(&env, "desc"),
+        &repeat_char(&env, 'c', 129),
+    );
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
