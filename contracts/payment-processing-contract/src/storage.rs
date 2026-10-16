@@ -618,3 +618,21 @@ pub fn save_merchant_stats(env: &Env, stats: &MerchantStats) {
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
 }
+
+// ── Emergency stop / pause flag (SEC-010) ─────────────────────────────────────
+
+/// Returns `true` when the contract is paused.
+///
+/// Stored in instance storage so that the check is O(1) and survives
+/// without TTL management (instance TTL is managed by `bump_instance_ttl`).
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false)
+}
+
+/// Set or clear the contract-paused flag.
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
+}

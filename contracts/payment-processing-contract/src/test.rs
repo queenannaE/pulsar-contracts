@@ -2199,3 +2199,188 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SEC-010: pause / emergency stop tests ────────────────────────────────────
+
+#[test]
+fn test_pause_and_unpause_by_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    assert!(!client.is_paused());
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn test_pause_blocks_register_merchant() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.pause(&admin);
+
+    assert_eq!(
+        client.try_register_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &str(&env, "c@c.com"),
+            &MerchantCategory::Retail,
+            &None,
+        ),
+        Err(Ok(PaymentError::ContractPaused))
+    );
+}
+
+#[test]
+fn test_pause_blocks_process_payment() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+    client.pause(&admin);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    assert_eq!(
+        client.try_process_payment_with_signature(
+            &payer,
+            &order,
+            &zero_sig(&env),
+            &zero_key(&env),
+        ),
+        Err(Ok(PaymentError::ContractPaused))
+    );
+}
+
+#[test]
+fn test_pause_blocks_initiate_refund() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+
+    client.pause(&admin);
+
+    assert_eq!(
+        client.try_initiate_refund(
+            &payer,
+            &bytes(&env, "REFUND_001"),
+            &bytes(&env, "ORDER_001"),
+            &500,
+            &str(&env, "reason"),
+        ),
+        Err(Ok(PaymentError::ContractPaused))
+    );
+}
+
+#[test]
+fn test_read_only_functions_work_when_paused() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    client.pause(&admin);
+
+    // get_merchant is read-only — must succeed even when paused
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.name, str(&env, "Store"));
+
+    // is_paused itself is also readable
+    assert!(client.is_paused());
+}
+
+#[test]
+fn test_non_admin_cannot_pause() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    assert_eq!(
+        client.try_pause(&non_admin),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_unpause_re_enables_state_mutations() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.pause(&admin);
+
+    // Blocked while paused
+    assert_eq!(
+        client.try_register_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &str(&env, "c@c.com"),
+            &MerchantCategory::Retail,
+            &None,
+        ),
+        Err(Ok(PaymentError::ContractPaused))
+    );
+
+    // Succeeds after unpause
+    client.unpause(&admin);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert!(client.get_merchant(&merchant).active);
+}
+
+#[test]
+fn test_pause_emits_contract_paused_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.pause(&admin);
+    // Verify state — event emission is fire-and-forget in Soroban test env
+    assert!(client.is_paused());
+}

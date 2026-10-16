@@ -291,4 +291,7 @@ pub enum DataKey {
     PoolConfig,
     PoolStats,
     PoolConnection(u32),
+    /// Emergency stop flag (SEC-010). When `true`, all state-mutating functions
+    /// return `ContractPaused`. Read-only functions are unaffected.
+    Paused,
 }

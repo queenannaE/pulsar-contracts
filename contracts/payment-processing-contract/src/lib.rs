@@ -85,6 +85,50 @@ impl PaymentContract {
         storage::bump_instance_ttl(&env);
     }
 
+    // ── Emergency stop (SEC-010) ──────────────────────────────────────────────
+
+    /// Pause the contract, blocking all state-mutating operations.
+    ///
+    /// Use this as an emergency stop when a critical vulnerability is discovered
+    /// post-deployment. Read-only query functions remain accessible while paused.
+    /// Only the admin may call this function.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if `admin` is not the stored admin.
+    pub fn pause(env: Env, admin: Address) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        helper::require_admin(&env, &admin)?;
+        storage::set_paused(&env, true);
+        env.events().publish(
+            (String::from_str(&env, "contract_paused"),),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Resume the contract after it has been paused.
+    ///
+    /// Re-enables all state-mutating operations. Only the admin may call this.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if `admin` is not the stored admin.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        helper::require_admin(&env, &admin)?;
+        storage::set_paused(&env, false);
+        env.events().publish(
+            (String::from_str(&env, "contract_unpaused"),),
+            admin,
+        );
+        Ok(())
+    }
+
+    /// Returns `true` if the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        storage::bump_instance_ttl(&env);
+        storage::is_paused(&env)
+    }
+
     // ── Merchant management ───────────────────────────────────────────────────
 
     /// Register a new merchant on the contract.
@@ -112,6 +156,7 @@ impl PaymentContract {
         signing_public_key: Option<BytesN<32>>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         merchant_address.require_auth();
         if storage::get_merchant(&env, &merchant_address).is_some() {
             return Err(PaymentError::MerchantAlreadyRegistered);
@@ -182,6 +227,7 @@ impl PaymentContract {
         admin_authorizers: Option<Vec<Address>>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         if let Some(admins) = admin_authorizers {
             helper::require_multi_admin(&env, admins)?;
         } else {
@@ -224,6 +270,7 @@ impl PaymentContract {
         description: String,
         contact_info: String,
     ) -> Result<(), PaymentError> {
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         merchant_address.require_auth();
         helper::validate_merchant_fields(&name, &description, &contact_info)?;
         let mut merchant =
@@ -249,6 +296,7 @@ impl PaymentContract {
         merchant_public_key: BytesN<32>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         payer.require_auth();
         if order.payer != payer {
             return Err(PaymentError::InvalidInput);
@@ -575,6 +623,7 @@ impl PaymentContract {
         order_id: Bytes,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         helper::require_multi_admin(&env, admins)?;
         let record = storage::get_payment(&env, &order_id).ok_or(PaymentError::PaymentNotFound)?;
         // Mark the order_id as archived (tombstone) to prevent replay
@@ -617,6 +666,7 @@ impl PaymentContract {
     /// - [`PaymentError::Unauthorized`] if the admin multi-sig check fails.
     pub fn cleanup_expired_payments(env: Env, admins: Vec<Address>) -> Result<u32, PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         helper::require_multi_admin(&env, admins)?;
         let period = storage::get_cleanup_period(&env);
         let now = env.ledger().timestamp();
@@ -655,6 +705,7 @@ impl PaymentContract {
         period: u64,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         helper::require_multi_admin(&env, admins)?;
         if period == 0 {
             return Err(PaymentError::InvalidInput);
@@ -678,6 +729,7 @@ impl PaymentContract {
         expiry: u64,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         helper::require_multi_admin(&env, admins)?;
         if expiry < 3600 {
             return Err(PaymentError::InvalidInput);
@@ -720,6 +772,7 @@ impl PaymentContract {
         reason: String,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         caller.require_auth();
         helper::validate_amount(amount)?;
         if reason.len() > 256 {
@@ -799,6 +852,7 @@ impl PaymentContract {
         admin_authorizers: Option<Vec<Address>>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         let mut refund =
             storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
         let record =
@@ -846,6 +900,7 @@ impl PaymentContract {
         admin_authorizers: Option<Vec<Address>>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         let mut refund =
             storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
         let record =
@@ -899,6 +954,7 @@ impl PaymentContract {
     /// - [`PaymentError::Unauthorized`] if `caller` is not the merchant.
     pub fn execute_refund(env: Env, caller: Address, refund_id: Bytes) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         caller.require_auth();
         let mut refund =
             storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
@@ -975,6 +1031,7 @@ impl PaymentContract {
         required_signers: Vec<Address>,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         initiator.require_auth();
         helper::validate_amount(order.amount)?;
         if storage::get_multisig(&env, &payment_id).is_some() {
@@ -1038,6 +1095,7 @@ impl PaymentContract {
         payment_id: Bytes,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         signer.require_auth();
         let mut ms =
             storage::get_multisig(&env, &payment_id).ok_or(PaymentError::MultisigNotFound)?;
@@ -1083,6 +1141,7 @@ impl PaymentContract {
         payment_id: Bytes,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         executor.require_auth();
         let mut ms =
             storage::get_multisig(&env, &payment_id).ok_or(PaymentError::MultisigNotFound)?;
@@ -1143,6 +1202,7 @@ impl PaymentContract {
         refund_id: Bytes,
         reason: String,
     ) -> Result<(), PaymentError> {
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         caller.require_auth();
 
         if reason.len() > 256 {
@@ -1187,6 +1247,7 @@ impl PaymentContract {
         refund_id: Bytes,
         approve: bool,
     ) -> Result<(), PaymentError> {
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         helper::require_multi_admin(&env, admins.clone())?;
 
         let mut refund =
@@ -1333,6 +1394,7 @@ impl PaymentContract {
         plan: types::SubscriptionPlan,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         payer.require_auth();
         if plan.interval == 0 {
             return Err(PaymentError::InvalidInput);
@@ -1380,6 +1442,7 @@ impl PaymentContract {
         subscription_id: Bytes,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         caller.require_auth();
         let mut sub = storage::get_subscription(&env, &subscription_id)
             .ok_or(PaymentError::SubscriptionNotFound)?;
@@ -1421,6 +1484,7 @@ impl PaymentContract {
         subscription_id: Bytes,
     ) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
         caller.require_auth();
         let mut sub = storage::get_subscription(&env, &subscription_id)
             .ok_or(PaymentError::SubscriptionNotFound)?;

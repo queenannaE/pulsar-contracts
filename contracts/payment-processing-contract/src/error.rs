@@ -58,4 +58,9 @@ pub enum PaymentError {
     /// The off-chain scheduler must wait until `last_charged_at + interval`
     /// before invoking `process_subscription_payment` again.
     SubscriptionIntervalNotElapsed = 63,
+
+    // Emergency stop (SEC-010)
+    /// The contract is paused. All state-mutating operations are blocked until
+    /// the admin calls `unpause`. Read-only queries remain accessible.
+    ContractPaused = 70,
 }
