@@ -70,6 +70,59 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Update the admin set and signing threshold.
+    ///
+    /// Requires the existing threshold of currently-registered admins to
+    /// authorise the change (i.e., the change itself must pass multi-sig).
+    /// This prevents a single compromised key from unilaterally replacing
+    /// the full admin set.
+    ///
+    /// # Parameters
+    /// - `current_admins` — Addresses of the admins authorising this change.
+    ///   Must satisfy the current threshold.
+    /// - `new_admins` — The new admin address list.
+    /// - `new_threshold` — The new signing threshold (1 ≤ threshold ≤ len(new_admins)).
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if `current_admins` does not satisfy
+    ///   the current threshold.
+    /// - [`PaymentError::InvalidInput`] if `new_admins` is empty, or
+    ///   `new_threshold` is zero or greater than the number of new admins.
+    pub fn update_admin_config(
+        env: Env,
+        current_admins: Vec<Address>,
+        new_admins: Vec<Address>,
+        new_threshold: u32,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        // The change must be authorised by the existing multi-sig.
+        helper::require_multi_admin(&env, current_admins)?;
+        if new_admins.is_empty() {
+            return Err(PaymentError::InvalidInput);
+        }
+        if new_threshold == 0 || new_threshold as usize > new_admins.len() as usize {
+            return Err(PaymentError::InvalidInput);
+        }
+        let first = new_admins.get(0).unwrap();
+        // Keep single-admin pointer in sync with the first new admin.
+        storage::set_admin(&env, &first);
+        storage::set_admin_config(&env, &types::AdminConfig {
+            admins: new_admins.clone(),
+            threshold: new_threshold,
+        });
+        env.events().publish(
+            (String::from_str(&env, "admin_config_updated"),),
+            (new_admins, new_threshold),
+        );
+        Ok(())
+    }
+
+    /// Return the current admin configuration (admin list and threshold).
+    pub fn get_admin_config(env: Env) -> Result<types::AdminConfig, PaymentError> {
+        storage::bump_instance_ttl(&env);
+        storage::get_admin_config(&env).ok_or(PaymentError::Unauthorized)
+    }
+
     pub fn get_version(env: Env) -> u32 {
         storage::bump_instance_ttl(&env);
         storage::get_contract_version(&env)

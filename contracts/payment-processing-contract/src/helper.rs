@@ -163,18 +163,39 @@ pub fn matches_filter(record: &PaymentRecord, filter: &PaymentFilter) -> bool {
     true
 }
 
-/// Require that at least one address in `admins` matches the stored admin config.
+/// Require that at least `threshold` addresses in `admins` are registered
+/// admin addresses and each provides authorization.
+///
+/// The threshold is read from the stored [`AdminConfig`]. If no config is
+/// present the contract falls back to single-admin mode (threshold = 1).
+///
+/// # Multi-sig semantics
+/// - The caller supplies a list of addresses claiming to be admins.
+/// - Each address in the list that is a registered admin is asked to
+///   `require_auth()` (the Soroban host verifies the signature on-chain).
+/// - If the count of successfully-authorized admin addresses meets or
+///   exceeds the stored threshold, the call proceeds. Otherwise it is
+///   rejected with [`PaymentError::Unauthorized`].
+///
+/// This implements an N-of-M ("threshold-of-total") multi-sig model where
+/// N is the threshold and M is the total number of registered admins.
 pub fn require_multi_admin(env: &Env, admins: Vec<Address>) -> Result<(), PaymentError> {
     if let Some(config) = storage::get_admin_config(env) {
+        let threshold = config.threshold.max(1) as usize;
+        let mut authorized: usize = 0;
         for addr in admins.iter() {
             if config.admins.contains(&addr) {
                 addr.require_auth();
-                return Ok(());
+                authorized += 1;
+                if authorized >= threshold {
+                    return Ok(());
+                }
             }
         }
+        // Not enough authorized admins.
         return Err(PaymentError::Unauthorized);
     }
-    // Fall back to single-admin mode.
+    // Fall back to single-admin mode (no AdminConfig stored).
     if let Some(admin) = storage::get_admin(env) {
         for addr in admins.iter() {
             if addr == admin {

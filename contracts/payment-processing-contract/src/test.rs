@@ -2199,3 +2199,149 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SEC-006: multi-sig admin governance tests ─────────────────────────────────
+
+fn admins3(env: &Env, a: &Address, b: &Address, c: &Address) -> Vec<Address> {
+    let mut v = Vec::new(env);
+    v.push_back(a.clone());
+    v.push_back(b.clone());
+    v.push_back(c.clone());
+    v
+}
+
+/// Set up contract with a 2-of-3 admin config.
+fn setup_multisig_admin(env: &Env, client: &PaymentContractClient) -> (Address, Address, Address) {
+    let a = Address::generate(env);
+    let b = Address::generate(env);
+    let c = Address::generate(env);
+    client.set_admin(&admins3(env, &a, &b, &c), &2);
+    (a, b, c)
+}
+
+#[test]
+fn test_set_admin_with_multiple_admins() {
+    let (env, client) = setup();
+    let (a, b, c) = setup_multisig_admin(&env, &client);
+    let config = client.get_admin_config();
+    assert_eq!(config.threshold, 2);
+    assert!(config.admins.contains(&a));
+    assert!(config.admins.contains(&b));
+    assert!(config.admins.contains(&c));
+}
+
+#[test]
+fn test_single_admin_below_threshold_is_rejected() {
+    let (env, client) = setup();
+    let (a, _b, _c) = setup_multisig_admin(&env, &client);
+    // Only one admin provided; threshold is 2 → should fail
+    assert_eq!(
+        client.try_cleanup_expired_payments(&admins(&env, &a)),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_two_admins_meet_threshold() {
+    let (env, client) = setup();
+    let (a, b, _c) = setup_multisig_admin(&env, &client);
+    // Two admins provided; threshold is 2 → should succeed
+    let mut two = Vec::new(&env);
+    two.push_back(a.clone());
+    two.push_back(b.clone());
+    // cleanup_expired_payments is a no-op when there's nothing to clean up
+    client.cleanup_expired_payments(&two);
+}
+
+#[test]
+fn test_update_admin_config_requires_current_threshold() {
+    let (env, client) = setup();
+    let (a, b, _c) = setup_multisig_admin(&env, &client);
+    let new_admin = Address::generate(&env);
+
+    let mut current_two = Vec::new(&env);
+    current_two.push_back(a.clone());
+    current_two.push_back(b.clone());
+
+    let mut new_set = Vec::new(&env);
+    new_set.push_back(new_admin.clone());
+    new_set.push_back(a.clone());
+
+    // Rotate: 2-of-3 → 1-of-2
+    client.update_admin_config(&current_two, &new_set, &1);
+    let config = client.get_admin_config();
+    assert_eq!(config.threshold, 1);
+    assert!(config.admins.contains(&new_admin));
+}
+
+#[test]
+fn test_update_admin_config_rejected_below_threshold() {
+    let (env, client) = setup();
+    let (a, _b, _c) = setup_multisig_admin(&env, &client);
+    let new_admin = Address::generate(&env);
+
+    // Only one current admin signer; threshold is 2 → should fail
+    let mut new_set = Vec::new(&env);
+    new_set.push_back(new_admin.clone());
+
+    assert_eq!(
+        client.try_update_admin_config(
+            &admins(&env, &a),
+            &new_set,
+            &1,
+        ),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_update_admin_config_invalid_threshold_zero() {
+    let (env, client) = setup();
+    let (a, b, _c) = setup_multisig_admin(&env, &client);
+    let new_admin = Address::generate(&env);
+
+    let mut current_two = Vec::new(&env);
+    current_two.push_back(a.clone());
+    current_two.push_back(b.clone());
+
+    let mut new_set = Vec::new(&env);
+    new_set.push_back(new_admin.clone());
+
+    // threshold = 0 is invalid
+    assert_eq!(
+        client.try_update_admin_config(&current_two, &new_set, &0),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
+#[test]
+fn test_update_admin_config_threshold_exceeds_admin_count() {
+    let (env, client) = setup();
+    let (a, b, _c) = setup_multisig_admin(&env, &client);
+    let new_admin = Address::generate(&env);
+
+    let mut current_two = Vec::new(&env);
+    current_two.push_back(a.clone());
+    current_two.push_back(b.clone());
+
+    let mut new_set = Vec::new(&env);
+    new_set.push_back(new_admin.clone());
+
+    // threshold = 2 but only 1 new admin → invalid
+    assert_eq!(
+        client.try_update_admin_config(&current_two, &new_set, &2),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
+#[test]
+fn test_non_admin_cannot_call_admin_only_functions() {
+    let (env, client) = setup();
+    let (_a, _b, _c) = setup_multisig_admin(&env, &client);
+    let attacker = Address::generate(&env);
+
+    assert_eq!(
+        client.try_cleanup_expired_payments(&admins(&env, &attacker)),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
