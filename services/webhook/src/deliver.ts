@@ -1,6 +1,7 @@
 import https from "https";
 import http from "http";
 import { URL } from "url";
+import * as dlq from "./dlq";
 
 export interface WebhookPayload {
   event: string;
@@ -13,23 +14,48 @@ export interface WebhookPayload {
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1_000;
 
-export async function deliver(url: string, payload: WebhookPayload): Promise<void> {
+/**
+ * Attempt to deliver `payload` to `url` with exponential-backoff retries.
+ *
+ * If all attempts are exhausted, the delivery is moved to the Dead Letter
+ * Queue (DLQ) instead of being silently dropped.  The DLQ can be inspected
+ * and replayed via the admin API endpoints:
+ *
+ *   GET  /admin/dlq           — list all failed deliveries
+ *   GET  /admin/dlq/:id       — inspect a single entry
+ *   POST /admin/dlq/:id/replay — replay a single entry
+ */
+export async function deliver(
+  url: string,
+  payload: WebhookPayload,
+): Promise<void> {
   const body = JSON.stringify(payload);
+  const firstAttemptAt = new Date().toISOString();
+  let lastError = "unknown error";
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       await post(url, body);
-      return;
+      return; // success — nothing to DLQ
     } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+
       if (attempt === MAX_ATTEMPTS) {
-        console.error(`[webhook] Failed to deliver to ${url} after ${MAX_ATTEMPTS} attempts:`, err);
+        // All attempts exhausted — move to DLQ.
+        dlq.enqueue(url, payload, attempt, lastError, firstAttemptAt);
         return;
       }
+
       const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
-      console.warn(`[webhook] Attempt ${attempt} failed for ${url}. Retrying in ${delay}ms…`);
+      console.warn(
+        `[webhook] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${url} (${lastError}). Retrying in ${delay}ms…`,
+      );
       await sleep(delay);
     }
   }
 }
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
 function post(url: string, body: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -54,7 +80,7 @@ function post(url: string, body: string): Promise<void> {
           reject(new Error(`HTTP ${res.statusCode}`));
         }
         res.resume();
-      }
+      },
     );
     req.on("error", reject);
     req.write(body);
@@ -62,4 +88,4 @@ function post(url: string, body: string): Promise<void> {
   });
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

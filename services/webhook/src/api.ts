@@ -1,6 +1,8 @@
 import express from "express";
 import { registerWebhook, getWebhook, deleteWebhook } from "./store";
 import { checkDependencies, ComponentStatus } from "./health";
+import * as dlq from "./dlq";
+import { deliver } from "./deliver";
 
 export function createRouter(rpcUrl: string, contractId: string): express.Router {
   const router = express.Router();
@@ -129,6 +131,71 @@ export function createRouter(rpcUrl: string, contractId: string): express.Router
   router.delete("/webhooks/:merchantAddress", (req, res) => {
     const deleted = deleteWebhook(req.params.merchantAddress);
     res.status(deleted ? 204 : 404).end();
+  });
+
+  // ── DLQ Admin endpoints ────────────────────────────────────────────────────
+  //
+  // These endpoints are intended for admin / ops use only.  In production,
+  // protect them with an API key or IP allowlist middleware before exposing
+  // them publicly.
+
+  // GET /admin/dlq — list all DLQ entries (newest first)
+  // Query params:
+  //   url_prefix — filter to entries whose target URL starts with this string
+  router.get("/admin/dlq", (_req, res) => {
+    const urlPrefix =
+      typeof _req.query["url_prefix"] === "string"
+        ? _req.query["url_prefix"]
+        : undefined;
+    const entries = dlq.listEntries(urlPrefix);
+    res.json({
+      depth: dlq.depth(),
+      threshold: dlq.DLQ_ALERT_THRESHOLD,
+      thresholdExceeded: dlq.depth() >= dlq.DLQ_ALERT_THRESHOLD,
+      entries,
+    });
+  });
+
+  // GET /admin/dlq/:id — inspect a single DLQ entry
+  router.get("/admin/dlq/:id", (req, res) => {
+    const entry = dlq.getEntry(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: "DLQ entry not found" });
+      return;
+    }
+    res.json(entry);
+  });
+
+  // POST /admin/dlq/:id/replay — replay a single DLQ entry
+  // Re-attempts delivery with the original payload and full backoff.
+  // On success the entry is removed from the DLQ.
+  // On failure the entry is retained for further manual retry; a new DLQ
+  // entry may be created by deliver() for the re-attempt.
+  router.post("/admin/dlq/:id/replay", async (req, res) => {
+    const entry = dlq.getEntry(req.params.id);
+    if (!entry) {
+      res.status(404).json({ error: "DLQ entry not found" });
+      return;
+    }
+
+    dlq.markReplayAttempt(req.params.id);
+
+    try {
+      await deliver(entry.url, entry.payload);
+      dlq.remove(req.params.id);
+      res
+        .status(200)
+        .json({ success: true, message: `Entry ${req.params.id} replayed and removed from DLQ.` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(502).json({ success: false, error: message });
+    }
+  });
+
+  // DELETE /admin/dlq/:id — discard a DLQ entry without replaying
+  router.delete("/admin/dlq/:id", (req, res) => {
+    const removed = dlq.remove(req.params.id);
+    res.status(removed ? 204 : 404).end();
   });
 
   return router;
