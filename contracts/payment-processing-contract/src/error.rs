@@ -21,6 +21,8 @@ pub enum PaymentError {
     InvalidAmount = 22,
     InvalidSignature = 23,
     PaymentExpired = 24,
+    /// Payer or merchant does not have enough token balance to complete the transfer.
+    InsufficientBalance = 25,
 
     // Refund
     RefundNotFound = 30,

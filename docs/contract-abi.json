@@ -472,7 +472,7 @@
     { "code": 22, "name": "InvalidAmount",               "description": "Amount must be greater than zero" },
     { "code": 23, "name": "InvalidSignature",            "description": "ed25519 signature verification failed" },
     { "code": 24, "name": "PaymentExpired",              "description": "Order is past its expires_at timestamp" },
-    { "code": 25, "name": "InsufficientBalance",         "description": "Merchant balance too low for refund" },
+    { "code": 25, "name": "InsufficientBalance",         "description": "Payer or merchant does not hold enough token balance to complete the transfer" },
     { "code": 30, "name": "RefundNotFound",              "description": "Refund ID not found" },
     { "code": 31, "name": "RefundAlreadyExists",         "description": "A refund with this ID already exists — safe to treat as idempotent" },
     { "code": 32, "name": "RefundWindowExpired",         "description": "Past the 30-day refund window" },

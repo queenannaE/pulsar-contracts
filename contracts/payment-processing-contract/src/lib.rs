@@ -296,6 +296,10 @@ impl PaymentContract {
         // Commit payment state before the external token transfer to reduce
         // re-entrancy risk in external contracts.
         let token_client = token::Client::new(&env, &order.token);
+        // Pre-check balance to return a typed error instead of a host trap.
+        if token_client.balance(&payer) < order.amount {
+            return Err(PaymentError::InsufficientBalance);
+        }
         token_client.transfer(&payer, &order.merchant_address, &order.amount);
         env.events().publish(
             (String::from_str(&env, "payment_processed"),),
@@ -925,6 +929,10 @@ impl PaymentContract {
         storage::decrement_order_refund_count(&env, &refund.order_id);
         storage::increment_refund_stats(&env, refund.amount)?;
         let token_client = token::Client::new(&env, &record.token);
+        // Pre-check merchant balance to return a typed error instead of a host trap.
+        if token_client.balance(&record.merchant_address) < refund.amount {
+            return Err(PaymentError::InsufficientBalance);
+        }
         token_client.transfer(&record.merchant_address, &record.payer, &refund.amount);
         env.events().publish(
             (String::from_str(&env, "refund_executed"),),

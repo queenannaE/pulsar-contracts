@@ -40,6 +40,7 @@ Versions follow **MAJOR.MINOR.PATCH** semantics:
 - Harden payment and refund flows against external token transfer re-entrancy by committing state before external calls.
 - Add best-effort zero/burn admin address validation and test coverage for invalid admin assignment.
 - Add date-filter coverage for `get_global_payment_stats` to cover all-payments and no-payments ranges.
+- Add `InsufficientBalance` (code 25) to `PaymentError` enum and pre-check payer/merchant token balances before transfers in `process_payment_with_signature` and `execute_refund`, returning a typed error instead of a host trap. Closes #10.
 
 ---
 

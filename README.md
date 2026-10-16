@@ -775,7 +775,7 @@ The contract implements a **hybrid analytics approach**:
 | 22 | `InvalidAmount` | Amount ≤ 0 |
 | 23 | `InvalidSignature` | Signature verification failed |
 | 24 | `PaymentExpired` | Order past `expires_at` |
-| 25 | `InsufficientBalance` | Merchant balance too low for refund |
+| 25 | `InsufficientBalance` | Payer or merchant token balance too low for the transfer |
 | 30 | `RefundNotFound` | Refund ID not found |
 | 31 | `RefundAlreadyExists` | Duplicate refund ID |
 | 32 | `RefundWindowExpired` | Past 30-day refund window |

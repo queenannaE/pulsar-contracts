@@ -53,6 +53,11 @@
       "message": "Order is past its expiry timestamp"
     },
     {
+      "code": 25,
+      "name": "InsufficientBalance",
+      "message": "Payer or merchant does not have enough token balance to complete the transfer"
+    },
+    {
       "code": 30,
       "name": "RefundNotFound",
       "message": "Refund ID not found"

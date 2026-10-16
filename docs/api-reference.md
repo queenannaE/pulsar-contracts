@@ -563,7 +563,7 @@ Emitted by `upgrade`.
 | 22   | `InvalidAmount`               | Amount ≤ 0                                               | No |
 | 23   | `InvalidSignature`            | ed25519 signature verification failed                    | No |
 | 24   | `PaymentExpired`              | Order past `expires_at`                                  | No |
-| 25   | `InsufficientBalance`         | Merchant balance too low for refund                      | No |
+| 25   | `InsufficientBalance`         | Payer or merchant token balance too low for the transfer | No |
 | 30   | `RefundNotFound`              | Refund ID not found                                      | No |
 | 31   | `RefundAlreadyExists`         | Duplicate `refund_id` — treat as success on retry        | ✅ Yes |
 | 32   | `RefundWindowExpired`         | Past 30-day refund window                                | No |

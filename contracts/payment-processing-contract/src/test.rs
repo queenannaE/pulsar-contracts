@@ -2199,3 +2199,66 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-010: InsufficientBalance is returned from token transfers ──────────────
+
+#[test]
+fn test_process_payment_insufficient_payer_balance_returns_error() {
+    // Payer has zero balance → InsufficientBalance must be returned.
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    // Mint nothing for the payer — balance is 0
+    let order = make_order(&env, &merchant, &payer, &token);
+    let (_pk, sig) = sign_order(&env, &order);
+
+    let result = client.try_process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::InsufficientBalance)),
+        "Expected InsufficientBalance when payer has no tokens"
+    );
+}
+
+#[test]
+fn test_process_payment_underfunded_payer_returns_error() {
+    // Payer has some tokens but less than the order amount → InsufficientBalance.
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    // Mint only 500 but order amount is 1000
+    mint(&env, &token, &payer, 500);
+    let order = make_order(&env, &merchant, &payer, &token); // amount = 1000
+    let (_pk, sig) = sign_order(&env, &order);
+
+    let result = client.try_process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::InsufficientBalance)),
+        "Expected InsufficientBalance when payer balance is less than order amount"
+    );
+}
