@@ -162,6 +162,84 @@ impl PaymentContract {
         Ok(())
     }
 
+    // ── Token allowlist management (SEC-009) ──────────────────────────────────
+
+    /// Enable or disable enforcement of the token allowlist.
+    ///
+    /// When enabled, any payment whose `order.token` is not on the allowlist
+    /// will be rejected with [`PaymentError::TokenNotAllowed`].
+    /// When disabled (default), any token contract address is accepted.
+    ///
+    /// Use `add_allowed_token` to populate the allowlist before enabling it.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if the admin multi-sig check fails.
+    pub fn set_token_allowlist_mode(
+        env: Env,
+        admins: Vec<Address>,
+        enabled: bool,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        helper::require_multi_admin(&env, admins)?;
+        storage::set_token_allowlist_enabled(&env, enabled);
+        env.events().publish(
+            (String::from_str(&env, "token_allowlist_mode_set"),),
+            enabled,
+        );
+        Ok(())
+    }
+
+    /// Add a token contract address to the admin-managed allowlist.
+    ///
+    /// Has no effect if the token is already on the allowlist.
+    /// The allowlist is only enforced when `set_token_allowlist_mode(true)`
+    /// has been called.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if the admin multi-sig check fails.
+    pub fn add_allowed_token(
+        env: Env,
+        admins: Vec<Address>,
+        token: Address,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        helper::require_multi_admin(&env, admins)?;
+        storage::set_token_allowed(&env, &token, true);
+        env.events().publish(
+            (String::from_str(&env, "token_allowed"),),
+            token,
+        );
+        Ok(())
+    }
+
+    /// Remove a token contract address from the admin-managed allowlist.
+    ///
+    /// After removal, payments using this token will be rejected when the
+    /// allowlist is enabled.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if the admin multi-sig check fails.
+    pub fn remove_allowed_token(
+        env: Env,
+        admins: Vec<Address>,
+        token: Address,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        helper::require_multi_admin(&env, admins)?;
+        storage::set_token_allowed(&env, &token, false);
+        env.events().publish(
+            (String::from_str(&env, "token_removed"),),
+            token,
+        );
+        Ok(())
+    }
+
+    /// Returns `true` when `token` is on the allowlist.
+    pub fn is_token_allowed(env: Env, token: Address) -> bool {
+        storage::bump_instance_ttl(&env);
+        storage::is_token_allowed(&env, &token)
+    }
+
     /// Deactivate a merchant, preventing new payments from being processed.
     ///
     /// Can be called by the merchant themselves or by the admin multi-sig.
@@ -261,6 +339,12 @@ impl PaymentContract {
         let now = env.ledger().timestamp();
         if order.expires_at > 0 && now > order.expires_at {
             return Err(PaymentError::PaymentExpired);
+        }
+        // SEC-009: enforce token allowlist when enabled
+        if storage::is_token_allowlist_enabled(&env)
+            && !storage::is_token_allowed(&env, &order.token)
+        {
+            return Err(PaymentError::TokenNotAllowed);
         }
         let merchant = storage::get_merchant(&env, &order.merchant_address)
             .ok_or(PaymentError::MerchantNotFound)?;
@@ -983,6 +1067,12 @@ impl PaymentContract {
         if required_signers.is_empty() || required_signers.len() > storage::MAX_SIGNERS {
             return Err(PaymentError::InvalidInput);
         }
+        // SEC-009: enforce token allowlist when enabled
+        if storage::is_token_allowlist_enabled(&env)
+            && !storage::is_token_allowed(&env, &order.token)
+        {
+            return Err(PaymentError::TokenNotAllowed);
+        }
         let merchant = storage::get_merchant(&env, &order.merchant_address)
             .ok_or(PaymentError::MerchantNotFound)?;
         if !merchant.active {
@@ -1436,6 +1526,12 @@ impl PaymentContract {
         // elapsed.
         if sub.last_charged_at > 0 && now < sub.last_charged_at + sub.plan.interval {
             return Err(PaymentError::SubscriptionIntervalNotElapsed);
+        }
+        // SEC-009: enforce token allowlist when enabled
+        if storage::is_token_allowlist_enabled(&env)
+            && !storage::is_token_allowed(&env, &sub.plan.token)
+        {
+            return Err(PaymentError::TokenNotAllowed);
         }
         // Transfer funds from payer to merchant before updating state so that a
         // failed transfer leaves the subscription record unchanged.

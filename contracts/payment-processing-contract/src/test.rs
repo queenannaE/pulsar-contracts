@@ -2199,3 +2199,170 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SEC-009: token allowlist tests ───────────────────────────────────────────
+
+#[test]
+fn test_payment_allowed_when_allowlist_disabled() {
+    // Default: allowlist is off, any token is accepted
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    // Should succeed — allowlist not enabled
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.amount, 1000);
+}
+
+#[test]
+fn test_payment_blocked_when_token_not_on_allowlist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    // Enable allowlist without adding the token
+    client.set_token_allowlist_mode(&admins(&env, &admin), &true);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    assert_eq!(
+        client.try_process_payment_with_signature(
+            &payer,
+            &order,
+            &zero_sig(&env),
+            &zero_key(&env),
+        ),
+        Err(Ok(PaymentError::TokenNotAllowed))
+    );
+}
+
+#[test]
+fn test_payment_allowed_after_token_added_to_allowlist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    client.set_token_allowlist_mode(&admins(&env, &admin), &true);
+    client.add_allowed_token(&admins(&env, &admin), &token);
+
+    assert!(client.is_token_allowed(&token));
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.amount, 1000);
+}
+
+#[test]
+fn test_payment_blocked_after_token_removed_from_allowlist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    client.set_token_allowlist_mode(&admins(&env, &admin), &true);
+    client.add_allowed_token(&admins(&env, &admin), &token);
+    client.remove_allowed_token(&admins(&env, &admin), &token);
+
+    assert!(!client.is_token_allowed(&token));
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    assert_eq!(
+        client.try_process_payment_with_signature(
+            &payer,
+            &order,
+            &zero_sig(&env),
+            &zero_key(&env),
+        ),
+        Err(Ok(PaymentError::TokenNotAllowed))
+    );
+}
+
+#[test]
+fn test_non_admin_cannot_set_token_allowlist_mode() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    assert_eq!(
+        client.try_set_token_allowlist_mode(&admins(&env, &non_admin), &true),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_allowlist_disabled_allows_any_token() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    // Enable then disable — token never added but should now pass
+    client.set_token_allowlist_mode(&admins(&env, &admin), &true);
+    client.set_token_allowlist_mode(&admins(&env, &admin), &false);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.amount, 1000);
+}
