@@ -227,6 +227,142 @@ fn test_register_contact_info_sanitisation_rejects_control_chars() {
     );
 }
 
+// ── SEC-007: comprehensive contact_info validation tests ──────────────────────
+
+/// Null byte (0x00) must be rejected.
+#[test]
+fn test_contact_info_rejects_null_byte() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    let bad = String::from_str(&env, "hello\x00world");
+    assert_eq!(
+        client.try_register_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &bad,
+            &MerchantCategory::Retail,
+            &None
+        ),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
+/// DEL character (0x7F) is not printable ASCII and must be rejected.
+#[test]
+fn test_contact_info_rejects_del_char() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    let bad = String::from_str(&env, "contact\x7f");
+    assert_eq!(
+        client.try_register_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &bad,
+            &MerchantCategory::Retail,
+            &None
+        ),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
+/// A string of exactly 128 printable ASCII characters must be accepted.
+#[test]
+fn test_contact_info_accepts_max_length_printable_ascii() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    // 128 'a' characters
+    let max_contact = String::from_str(
+        &env,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    // Should succeed
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &max_contact,
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.contact_info, max_contact);
+}
+
+/// A string exceeding 128 bytes must be rejected.
+#[test]
+fn test_contact_info_rejects_over_max_length() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    // 129 'a' characters
+    let too_long = String::from_str(
+        &env,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+         a",
+    );
+    assert_eq!(
+        client.try_register_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &too_long,
+            &MerchantCategory::Retail,
+            &None
+        ),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
+/// An XSS payload containing angle brackets is printable ASCII and should be
+/// accepted by the contract (the contract stores what the caller provides;
+/// frontend rendering MUST escape output). This test documents the trust boundary.
+#[test]
+fn test_contact_info_xss_payload_is_printable_ascii_accepted_by_contract() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    // Angle brackets are printable ASCII (0x3C, 0x3E) — the contract stores them.
+    // Frontends are responsible for HTML-escaping on render.
+    let xss_attempt = String::from_str(&env, "<script>alert(1)</script>");
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &xss_attempt,
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let m = client.get_merchant(&merchant);
+    assert_eq!(m.contact_info, xss_attempt);
+}
+
+/// update_merchant must also enforce contact_info validation.
+#[test]
+fn test_update_merchant_contact_info_rejects_control_chars() {
+    let (env, client) = setup();
+    let merchant = Address::generate(&env);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "valid@email.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    let bad = String::from_str(&env, "bad\x1Fcontrol");
+    assert_eq!(
+        client.try_update_merchant(
+            &merchant,
+            &str(&env, "Store"),
+            &str(&env, "desc"),
+            &bad,
+        ),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
 #[test]
 fn test_deactivate_merchant() {
     let (env, client) = setup();
