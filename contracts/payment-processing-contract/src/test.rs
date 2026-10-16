@@ -2199,3 +2199,83 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-012: update_payment_status is disabled; refund workflow is the only path ─
+
+#[test]
+fn test_update_payment_status_always_returns_invalid_input() {
+    // update_payment_status must always return InvalidInput regardless of caller.
+    // It is retained for ABI compatibility but intentionally disabled.
+    let (env, client) = setup();
+    let caller = Address::generate(&env);
+    let order_id = bytes(&env, "ORDER_001");
+
+    let result = client.try_update_payment_status(&caller, &order_id, &500);
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::InvalidInput)),
+        "update_payment_status must always return InvalidInput"
+    );
+}
+
+#[test]
+fn test_update_payment_status_does_not_mutate_payment_record() {
+    // Even if called with valid parameters, update_payment_status must NOT
+    // change the payment record — it returns InvalidInput immediately.
+    let (env, client) = setup();
+    let (_admin, merchant, payer, _token) = setup_paid_order(&env, &client);
+    let order_id = bytes(&env, "ORDER_001");
+
+    // Record before the call
+    let record_before = client.get_payment_by_id(&payer, &order_id);
+
+    // Attempt to bypass the refund workflow
+    let result = client.try_update_payment_status(&merchant, &order_id, &1000);
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+
+    // Record must be unchanged
+    let record_after = client.get_payment_by_id(&payer, &order_id);
+    assert_eq!(record_before.refunded_amount, record_after.refunded_amount);
+    assert_eq!(record_before.status, record_after.status);
+}
+
+#[test]
+fn test_refund_workflow_is_sole_path_to_status_change() {
+    // Status changes must only happen through initiate→approve→execute.
+    let (env, client) = setup();
+    let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);
+    let order_id = bytes(&env, "ORDER_001");
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+
+    // Payment status starts as Completed with zero refunded amount
+    let record = client.get_payment_by_id(&payer, &order_id);
+    assert_eq!(record.refunded_amount, 0);
+
+    // Attempt direct status update — must be rejected
+    assert_eq!(
+        client.try_update_payment_status(&merchant, &order_id, &500),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+
+    // Verify record still unchanged
+    let record = client.get_payment_by_id(&payer, &order_id);
+    assert_eq!(record.refunded_amount, 0);
+
+    // Now go through the proper refund workflow
+    let payer_before = token_client.balance(&payer);
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "REFUND_SC012"),
+        &order_id,
+        &500,
+        &str(&env, "Refund via workflow"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "REFUND_SC012"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "REFUND_SC012"));
+
+    // Status should now reflect the refund
+    let record = client.get_payment_by_id(&payer, &order_id);
+    assert_eq!(record.refunded_amount, 500);
+    // Payer received funds back
+    assert_eq!(token_client.balance(&payer), payer_before + 500);
+}
