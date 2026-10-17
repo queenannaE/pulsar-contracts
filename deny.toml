@@ -32,8 +32,11 @@ exceptions = []
 
 [[licenses.clarify]]
 name = "ring"
-# ring has a non-standard license, but it's widely used and acceptable in this context.
-# However, for now we stay strict with MIT/Apache-2.0 unless needed.
+# ring uses a custom license that is functionally MIT/ISC for most code plus
+# BoringSSL sections. The SPDX expression below reflects the effective license
+# as documented in ring's LICENSE file.
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
 multiple-versions = "warn"
