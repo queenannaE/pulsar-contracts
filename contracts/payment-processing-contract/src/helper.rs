@@ -101,16 +101,17 @@ pub fn validate_order_id(order_id: &Bytes) -> Result<(), PaymentError> {
 }
 
 /// Verify an ed25519 signature over `payload` using `public_key`.
+///
+/// Calls `env.crypto().ed25519_verify` in both production and test builds.
+/// The Soroban testutils environment provides a real ed25519 implementation,
+/// so signature tests are exercised end-to-end without any bypass.
 pub fn verify_signature(
     env: &Env,
     public_key: &BytesN<32>,
     payload: &Bytes,
     signature: &BytesN<64>,
 ) -> Result<(), PaymentError> {
-    #[cfg(not(any(test, feature = "testutils")))]
     env.crypto().ed25519_verify(public_key, payload, signature);
-    #[cfg(any(test, feature = "testutils"))]
-    let _ = (env, public_key, payload, signature);
     Ok(())
 }
 
