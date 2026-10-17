@@ -100,20 +100,37 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown --release --locked
         working-directory: contracts/payment-processing-contract
 
+      # DO-003: Gate on WASM binary size to catch regressions before they hit
+      # Soroban's hard limit (~128 KB). Hard fail >100 KB, warn at >80 KB.
       - name: Check WASM binary size
         run: |
           WASM=target/wasm32-unknown-unknown/release/payment_processing_contract.wasm
           SIZE=$(wc -c < "$WASM")
-          SIZE_KB=$(( SIZE / 1024 ))
+          # Use awk for a decimal KB value (e.g. 73.4 KB) instead of truncated integer division.
+          SIZE_KB=$(awk "BEGIN { printf \"%.1f\", $SIZE / 1024 }")
+          PCT=$(awk "BEGIN { printf \"%d\", ($SIZE / 102400) * 100 }")
+          WARN_LIMIT=81920   # 80 KB
+          HARD_LIMIT=102400  # 100 KB
+          STATUS="✅ Within limits"
+          if [ "$SIZE" -gt "$HARD_LIMIT" ]; then
+            STATUS="❌ EXCEEDS 100 KB HARD LIMIT"
+          elif [ "$SIZE" -gt "$WARN_LIMIT" ]; then
+            STATUS="⚠️ Above 80 KB warning threshold"
+          fi
           echo "## WASM Size Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "| File | Size |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|------|------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| payment_processing_contract.wasm | ${SIZE_KB} KB (${SIZE} bytes) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "WASM size: ${SIZE_KB} KB (${SIZE} bytes)"
-          if [ "$SIZE" -gt 102400 ]; then
-            echo "::error::WASM binary exceeds 100 KB limit (${SIZE_KB} KB). Reduce contract size before merging."
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| File | payment_processing_contract.wasm |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Size | ${SIZE_KB} KB (${SIZE} bytes) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Hard limit | 100 KB (102400 bytes) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Warning threshold | 80 KB (81920 bytes) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| % of hard limit | ${PCT}% |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status | ${STATUS} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "WASM size: ${SIZE_KB} KB (${SIZE} bytes) — ${PCT}% of 100 KB hard limit"
+          if [ "$SIZE" -gt "$HARD_LIMIT" ]; then
+            echo "::error::WASM binary exceeds 100 KB limit (${SIZE_KB} KB / ${SIZE} bytes). Reduce contract size before merging."
             exit 1
-          elif [ "$SIZE" -gt 81920 ]; then
+          elif [ "$SIZE" -gt "$WARN_LIMIT" ]; then
             echo "::warning::WASM binary is above 80 KB warning threshold (${SIZE_KB} KB). Consider reducing contract size."
           else
             echo "WASM size is within limits."
