@@ -347,6 +347,17 @@ stellar contract invoke --id $CONTRACT_ID --source-account <KEY> --network local
   -- set_admin --admin <ADDRESS>
 ```
 
+#### `transfer_admin`
+
+Two-step admin handoff. Both the current admin and the new admin must sign, proving the new key is live before the transfer is committed.
+
+```bash
+stellar contract invoke --id $CONTRACT_ID --source-account <CURRENT_ADMIN_KEY> --network local \
+  -- transfer_admin --current_admin <CURRENT_ADMIN_ADDRESS> --new_admin <NEW_ADMIN_ADDRESS>
+```
+
+Emits `admin_transferred` with payload `(current_admin, new_admin)`.
+
 #### `get_version`
 
 Returns the current contract version (u32).
@@ -747,6 +758,7 @@ The contract implements a **hybrid analytics approach**:
 | Event | Emitted by |
 |---|---|
 | `admin_set` | `set_admin` |
+| `admin_transferred` | `transfer_admin` — payload: `(current_admin, new_admin)` |
 | `merchant_registered` | `register_merchant` |
 | `merchant_deactivated` | `deactivate_merchant` |
 | `payment_processed` | `process_payment_with_signature` |

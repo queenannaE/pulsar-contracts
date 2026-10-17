@@ -63,6 +63,60 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Transfer admin authority to a new address (two-step handoff).
+    ///
+    /// Both the current admin and the new admin must authorise this call,
+    /// ensuring the new admin key is live and in possession of the caller.
+    ///
+    /// # Parameters
+    /// - `current_admin` — The existing admin address; must be authenticated
+    ///   and must match the stored admin.
+    /// - `new_admin` — The incoming admin address; must also authenticate,
+    ///   proving key possession before the transfer is committed.
+    ///
+    /// # Events
+    /// Emits `admin_transferred` with payload `(current_admin, new_admin)`.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if `current_admin` is not the stored admin.
+    /// - [`PaymentError::InvalidInput`] if `new_admin` is the zero/burn address.
+    pub fn transfer_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        // Require auth from both parties — proves the new key is live.
+        current_admin.require_auth();
+        new_admin.require_auth();
+        helper::validate_admin_address(&env, &new_admin)?;
+        // Verify current_admin is actually the stored admin.
+        let stored = storage::get_admin(&env).ok_or(PaymentError::Unauthorized)?;
+        if stored != current_admin {
+            return Err(PaymentError::Unauthorized);
+        }
+        // Update single-admin storage.
+        storage::set_admin(&env, &new_admin);
+        // If a multi-admin config exists, replace the old admin entry with the new one.
+        if let Some(mut config) = storage::get_admin_config(&env) {
+            let mut new_admins = Vec::new(&env);
+            for addr in config.admins.iter() {
+                if addr == current_admin {
+                    new_admins.push_back(new_admin.clone());
+                } else {
+                    new_admins.push_back(addr);
+                }
+            }
+            config.admins = new_admins;
+            storage::set_admin_config(&env, &config);
+        }
+        env.events().publish(
+            (String::from_str(&env, "admin_transferred"),),
+            (current_admin, new_admin),
+        );
+        Ok(())
+    }
+
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), PaymentError> {
         storage::bump_instance_ttl(&env);
         helper::require_admin(&env, &admin)?;

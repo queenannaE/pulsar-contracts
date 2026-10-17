@@ -124,6 +124,50 @@ fn test_set_admin_twice_fails() {
 }
 
 #[test]
+fn test_transfer_admin_success() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.transfer_admin(&admin, &new_admin);
+    // new_admin can now perform admin-gated actions; old admin cannot
+    assert_eq!(
+        client.try_cleanup_expired_payments(&admins(&env, &admin)),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+    // new_admin succeeds
+    let count = client.cleanup_expired_payments(&admins(&env, &new_admin));
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn test_transfer_admin_unauthorized_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    assert_eq!(
+        client.try_transfer_admin(&impostor, &new_admin),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    let before = env.events().all().len();
+    client.transfer_admin(&admin, &new_admin);
+    assert!(
+        env.events().all().len() > before,
+        "admin_transferred event must be emitted"
+    );
+}
+
+#[test]
 fn test_get_version_after_set_admin() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
