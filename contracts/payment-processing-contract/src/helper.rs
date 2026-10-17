@@ -32,7 +32,6 @@ pub fn validate_admin_address(env: &Env, admin: &Address) -> Result<(), PaymentE
 }
 
 /// Require that `caller` is the registered merchant at `merchant_address`.
-#[allow(dead_code)]
 pub fn require_merchant(
     env: &Env,
     caller: &Address,
