@@ -1212,6 +1212,70 @@ fn test_initiate_multisig_duplicate_signer_fails() {
     );
 }
 
+/// SC-025: initiate_multisig_payment must reject payments to a deactivated merchant.
+#[test]
+fn test_initiate_multisig_inactive_merchant_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    // Deactivate the merchant.
+    client.deactivate_merchant(&merchant);
+    mint(&env, &token, &signer1, 5000);
+    let order = PaymentOrder {
+        order_id: bytes(&env, "MS_INACTIVE"),
+        merchant_address: merchant.clone(),
+        payer: signer1.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Multisig order to inactive merchant"),
+        expires_at: 0,
+    };
+    let mut signers = Vec::new(&env);
+    signers.push_back(signer1.clone());
+    assert_eq!(
+        client.try_initiate_multisig_payment(&signer1, &bytes(&env, "MS_INACTIVE"), &order, &signers),
+        Err(Ok(PaymentError::MerchantInactive))
+    );
+}
+
+/// SC-025: initiate_multisig_payment must reject payments to an unregistered merchant.
+#[test]
+fn test_initiate_multisig_merchant_not_found_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let unknown_merchant = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    mint(&env, &token, &signer1, 5000);
+    let order = PaymentOrder {
+        order_id: bytes(&env, "MS_NOMERCHANT"),
+        merchant_address: unknown_merchant.clone(),
+        payer: signer1.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Multisig to unknown merchant"),
+        expires_at: 0,
+    };
+    let mut signers = Vec::new(&env);
+    signers.push_back(signer1.clone());
+    assert_eq!(
+        client.try_initiate_multisig_payment(&signer1, &bytes(&env, "MS_NOMERCHANT"), &order, &signers),
+        Err(Ok(PaymentError::MerchantNotFound))
+    );
+}
+
 #[test]
 fn test_multisig_payment_expiry() {
     let (env, client) = setup();
