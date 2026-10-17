@@ -234,7 +234,22 @@ fn test_deactivate_merchant() {
     let merchant = Address::generate(&env);
     client.set_admin(&admins(&env, &admin), &1);
     client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
-    client.deactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+    client.deactivate_merchant(&admin, &merchant, &Some(admins(&env, &admin)));
+    assert!(!client.get_merchant(&merchant).active);
+}
+
+#[test]
+fn test_deactivate_merchant_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
+    // snapshot event count before deactivation
+    let before = env.events().all().len();
+    client.deactivate_merchant(&admin, &merchant, &Some(admins(&env, &admin)));
+    // at least one new event must have been published
+    assert!(env.events().all().len() > before, "merchant_deactivated event must be emitted");
     assert!(!client.get_merchant(&merchant).active);
 }
 
@@ -314,7 +329,7 @@ fn test_update_merchant_inactive_fails() {
         &str(&env, "c@c.com"),
         &MerchantCategory::Retail,
     );
-    client.deactivate_merchant(&admin, &merchant);
+    client.deactivate_merchant(&admin, &merchant, &Some(admins(&env, &admin)));
     let result = client.try_update_merchant(
         &merchant,
         &str(&env, "New Name"),
@@ -1301,7 +1316,7 @@ fn test_create_subscription_inactive_merchant_fails() {
     let token = create_token(&env, &admin);
     client.set_admin(&admins(&env, &admin), &1);
     client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
-    client.deactivate_merchant(&merchant, &None);
+    client.deactivate_merchant(&merchant, &merchant, &None);
     assert_eq!(
         client.try_create_subscription(&payer, &merchant, &bytes(&env, "SUB_001"), &make_plan(&env, &token)),
         Err(Ok(PaymentError::MerchantInactive))
@@ -1659,7 +1674,7 @@ fn test_payment_with_inactive_merchant_fails() {
     mint(&env, &token, &admin, &payer, 5000);
 
     // Deactivate the merchant
-    client.deactivate_merchant(&merchant, &None);
+    client.deactivate_merchant(&merchant, &merchant, &None);
     let m = client.get_merchant(&merchant);
     assert!(!m.active);
 

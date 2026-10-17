@@ -748,7 +748,7 @@ The contract implements a **hybrid analytics approach**:
 |---|---|
 | `admin_set` | `set_admin` |
 | `merchant_registered` | `register_merchant` |
-| `merchant_deactivated` | `deactivate_merchant` |
+| `merchant_deactivated` | `deactivate_merchant` — payload: `(merchant_address, caller)` |
 | `payment_processed` | `process_payment_with_signature` |
 | `refund_initiated` | `initiate_refund` |
 | `refund_approved` | `approve_refund` |
