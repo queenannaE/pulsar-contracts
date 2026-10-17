@@ -18,11 +18,26 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), PaymentError> {
     Ok(())
 }
 
-/// Validate that `admin` is not the zero/burn address.
+/// Validate that `admin` is not the zero/burn address (SC-016).
+///
+/// # Limitation
+/// The Soroban SDK (as of v22) does not expose a dedicated `Address::is_zero()`
+/// or zero-address constant. Stellar accounts are identified by an ed25519
+/// public key, and there is no formally specified "burn address" analogous to
+/// Ethereum's `0x000…0`. This function therefore uses a best-effort heuristic:
+/// it serialises the address to XDR and checks whether every byte of the
+/// serialisation is zero. In practice, any real account key produced by a
+/// wallet will have at least one non-zero byte, so this check catches
+/// accidentally constructed zero-byte keys that would permanently lock all
+/// admin-only functions.
+///
+/// If the Soroban SDK later exposes a dedicated zero-address check or a
+/// canonical burn-address constant, this function should be updated to use it.
+///
+/// # Errors
+/// Returns [`PaymentError::InvalidInput`] if the XDR serialisation of
+/// `admin` is all-zero bytes.
 pub fn validate_admin_address(env: &Env, admin: &Address) -> Result<(), PaymentError> {
-    // The Soroban SDK does not expose a dedicated zero/burn address validation API
-    // for `Address`. This is a best-effort guard against a zero-address
-    // representation when the SDK serialization exposes it.
     let admin_xdr = admin.clone().to_xdr(env);
     let all_zero = admin_xdr.iter().all(|b| b == 0);
     if all_zero {

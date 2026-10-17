@@ -131,6 +131,38 @@ fn test_get_version_after_set_admin() {
     assert_eq!(client.get_version(), 1);
 }
 
+// ── SC-016: set_admin zero-address and empty-list validation ──────────────────
+
+#[test]
+fn test_set_admin_empty_admins_fails() {
+    // SC-016: passing an empty admins list must be rejected.
+    let (env, client) = setup();
+    let empty: Vec<Address> = Vec::new(&env);
+    let result = client.try_set_admin(&empty, &1);
+    assert_eq!(result, Err(Ok(PaymentError::InvalidInput)));
+}
+
+#[test]
+fn test_set_admin_valid_address_succeeds() {
+    // SC-016: a normally-generated (non-zero) address must be accepted.
+    // Address::generate always produces a real, non-zero Stellar account,
+    // confirming that the zero-address guard does not block valid admins.
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    // Should not panic or return an error.
+    client.set_admin(&admins(&env, &admin), &1);
+    assert_eq!(client.get_version(), 1);
+}
+
+// NOTE on zero-address test coverage (SC-016):
+// The Soroban SDK v22 does not provide a constructor that produces an Address
+// whose complete XDR serialisation is all-zero bytes. Address::generate() and
+// contract registration always produce at least one non-zero byte in XDR.
+// validate_admin_address() therefore cannot be exercised for the all-zero case
+// via normal SDK APIs. The guard is a best-effort defence: see the function
+// doc-comment in helper.rs for the full rationale and the expected upgrade path
+// once the SDK exposes a canonical zero-address or burn-address constant.
+
 #[test]
 fn test_ping() {
     let (env, client) = setup();
