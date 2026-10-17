@@ -140,10 +140,19 @@ pub fn get_merchant_payment_ids(env: &Env, merchant: &Address) -> Vec<Bytes> {
 
 pub fn push_merchant_payment_id(env: &Env, merchant: &Address, order_id: &Bytes) {
     let mut ids = get_merchant_payment_ids(env, merchant);
-    // SC-013: cap the in-contract index to prevent unbounded ledger entry growth.
-    // When the cap is reached, the oldest entry is evicted from the index.
-    // The underlying payment record stays in persistent storage and remains
-    // queryable by order ID; only the paginated history index is capped.
+    // SC-013: cap the in-contract merchant payment-ID index to prevent
+    // unbounded ledger entry growth. Loading and re-saving the entire Vec on
+    // every payment is O(n) in storage reads/writes; without a cap the entry
+    // would eventually exceed Soroban's per-entry size limit and make payments
+    // infeasible for active merchants.
+    //
+    // When the cap is reached, the oldest entry is evicted (FIFO). The
+    // underlying PaymentRecord stored under DataKey::Payment(order_id) is NOT
+    // deleted; it remains in persistent storage and is still queryable via
+    // get_payment_by_id. Only the paginated history index is capped.
+    //
+    // See ADR-0006 (docs/adr/0006-payment-id-index-cap.md) for the full
+    // trade-off analysis and the long-term chunked-index roadmap.
     if ids.len() >= MAX_PAYMENT_IDS_PER_KEY {
         let mut trimmed = Vec::new(env);
         for i in 1..ids.len() {
@@ -172,7 +181,8 @@ pub fn get_payer_payment_ids(env: &Env, payer: &Address) -> Vec<Bytes> {
 
 pub fn push_payer_payment_id(env: &Env, payer: &Address, order_id: &Bytes) {
     let mut ids = get_payer_payment_ids(env, payer);
-    // SC-013: same cap as merchant index.
+    // SC-013: same FIFO cap as the merchant index. See push_merchant_payment_id
+    // and ADR-0006 for the full rationale.
     if ids.len() >= MAX_PAYMENT_IDS_PER_KEY {
         let mut trimmed = Vec::new(env);
         for i in 1..ids.len() {
@@ -429,10 +439,13 @@ pub const MAX_SIGNERS: u32 = 10;
 /// Maximum number of pending refunds per order
 pub const MAX_PENDING_REFUNDS: u32 = 10;
 /// Maximum number of payment IDs tracked per merchant or payer in the
-/// in-contract index (SC-013). Older IDs are dropped from the index once the
-/// cap is reached; the full payment records remain in persistent storage and
-/// are still queryable by order ID. Off-chain indexers should be used for
-/// complete history beyond this cap.
+/// in-contract index (SC-013). Older IDs are evicted (FIFO) from the index
+/// once the cap is reached; the full `PaymentRecord` objects remain in
+/// persistent storage and are still queryable by `order_id`. Off-chain
+/// indexers should be used for complete history beyond this cap.
+///
+/// See `docs/adr/0006-payment-id-index-cap.md` for the trade-off analysis,
+/// benchmark estimates, and the long-term chunked-index roadmap.
 pub const MAX_PAYMENT_IDS_PER_KEY: u32 = 10_000;
 
 pub fn get_cleanup_period(env: &Env) -> u64 {

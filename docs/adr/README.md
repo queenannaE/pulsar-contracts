@@ -17,6 +17,7 @@ new contributors understand trade-offs and avoid re-litigating settled decisions
 | [ADR-0004](./0004-merchant-category-management.md) | Merchant Category Management | Accepted |
 | [ADR-0004b](./0004-expires-at-no-expiry.md) | `expires_at = 0` as "never expires" sentinel | Accepted |
 | [ADR-0005](./0005-analytics-and-reporting.md) | Analytics and Reporting Strategy | Accepted |
+| [ADR-0006](./0006-payment-id-index-cap.md) | Cap Merchant/Payer Payment-ID Index at 10,000 Entries (SC-013) | Accepted |
 
 ## Creating a new ADR
 
