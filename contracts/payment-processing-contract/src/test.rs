@@ -1212,6 +1212,80 @@ fn test_initiate_multisig_duplicate_signer_fails() {
     );
 }
 
+/// SC-026: exactly MAX_SIGNERS (10) required_signers should be accepted.
+#[test]
+fn test_initiate_multisig_max_signers_boundary() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+    let order = PaymentOrder {
+        order_id: bytes(&env, "MS_MAX10"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Max signers order"),
+        expires_at: 0,
+    };
+    // Build exactly 10 unique signers (the allowed maximum).
+    let mut signers = Vec::new(&env);
+    for _ in 0..10 {
+        signers.push_back(Address::generate(&env));
+    }
+    // Should succeed — 10 is at the boundary, not over it.
+    client.initiate_multisig_payment(&payer, &bytes(&env, "MS_MAX10"), &order, &signers);
+}
+
+/// SC-026: MAX_SIGNERS + 1 (11) required_signers must be rejected with InvalidInput.
+#[test]
+fn test_initiate_multisig_max_signers_exceeded() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+    let order = PaymentOrder {
+        order_id: bytes(&env, "MS_MAX11"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Over-limit signers order"),
+        expires_at: 0,
+    };
+    // Build 11 unique signers — one over the limit.
+    let mut signers = Vec::new(&env);
+    for _ in 0..11 {
+        signers.push_back(Address::generate(&env));
+    }
+    assert_eq!(
+        client.try_initiate_multisig_payment(&payer, &bytes(&env, "MS_MAX11"), &order, &signers),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
 #[test]
 fn test_multisig_payment_expiry() {
     let (env, client) = setup();
