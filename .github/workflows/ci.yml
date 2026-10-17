@@ -260,6 +260,10 @@ jobs:
           command: check
 
   deploy-testnet:
+    # DO-002: Automated testnet deployment job — triggered only on push to main
+    # (not on PRs). Uses a CI-managed testnet key stored in GitHub Secrets as
+    # TESTNET_SECRET_KEY. The deployed contract ID is captured as a job output
+    # and written to the GitHub Step Summary for visibility.
     name: Deploy to Testnet
     runs-on: ubuntu-latest
     needs: build
@@ -280,6 +284,7 @@ jobs:
         run: |
           curl -sSL https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C /usr/local/bin stellar
+          stellar --version
 
       - name: Deploy contract
         id: deploy
@@ -291,6 +296,17 @@ jobs:
             --source-account "$TESTNET_SECRET" \
             --network testnet)
           echo "contract_id=$CONTRACT_ID" >> "$GITHUB_OUTPUT"
+          echo "Deployed contract ID: $CONTRACT_ID"
+
+      - name: Write deployment summary
+        run: |
+          echo "## Testnet Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract ID | \`${{ steps.deploy.outputs.contract_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Network | testnet |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow run | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
 
   smoke-test:
     name: Smoke Test (Testnet)
