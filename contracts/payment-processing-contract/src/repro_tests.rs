@@ -546,3 +546,130 @@ fn test_pagination_sort_correctness_with_many_records() {
     let expected: alloc::vec::Vec<i128> = (1..=20).map(|i| i * 100).collect();
     assert_eq!(all_amounts, expected, "all 20 records must be returned once, in full");
 }
+
+// SC-018: Refund race condition — two concurrent pending refunds could together
+// exceed the original payment amount.
+//
+// Bug: initiate_refund checked `refunded_amount + amount <= record.amount` but
+// `refunded_amount` is only updated at execute_refund. Two simultaneous pending
+// refunds could each pass this check independently and, once both executed,
+// together exceed the original amount.
+//
+// Fix: PaymentRecord gains a `pending_refund_amount` field that is:
+//   - incremented at initiate_refund
+//   - decremented at reject_refund
+//   - decremented at execute_refund (replaced by an increment to refunded_amount)
+//
+// The initiation check is now:
+//   refunded_amount + pending_refund_amount + new_amount <= record.amount
+//
+// This means the second refund sees the first one already reserved and is
+// rejected if the combined total would exceed the payment.
+
+/// Two refund initiations whose combined amount equals the payment — both
+/// should be accepted because together they exactly match the total.
+#[test]
+fn test_two_concurrent_refunds_at_exact_limit_both_succeed() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "M"), &str(&env, "D"), &str(&env, "E"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 1000);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+
+    // First refund reserves 600 — pending_refund_amount becomes 600.
+    client.initiate_refund(&payer, &bytes(&env, "R_EXACT_1"), &order.order_id, &600, &str(&env, "part 1"));
+    // Second refund requests 400 — refunded(0) + pending(600) + new(400) = 1000 == amount(1000). OK.
+    client.initiate_refund(&payer, &bytes(&env, "R_EXACT_2"), &order.order_id, &400, &str(&env, "part 2"));
+
+    // Execute both — total refunded must equal original payment amount.
+    client.approve_refund(&merchant, &bytes(&env, "R_EXACT_1"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "R_EXACT_1"));
+    client.approve_refund(&merchant, &bytes(&env, "R_EXACT_2"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "R_EXACT_2"));
+
+    let record = client.get_payment_by_id(&payer, &order.order_id);
+    assert_eq!(record.refunded_amount, 1000, "full amount must be refunded");
+    assert_eq!(record.pending_refund_amount, 0, "no amount left pending");
+}
+
+/// Two simultaneous refund initiations whose combined amount exceeds the
+/// payment amount — the second must be rejected even though the first has
+/// not yet been executed (i.e. refunded_amount is still 0).
+///
+/// Without pending_refund_amount tracking both would have passed:
+///   check was: refunded_amount(0) + new_amount(700) <= payment(1000) → pass
+///              refunded_amount(0) + new_amount(400) <= payment(1000) → pass  ← BUG
+/// With the fix the second sees the reservation from the first:
+///   check is:  refunded(0) + pending(700) + new(400) = 1101 > 1000 → REJECT
+#[test]
+fn test_two_concurrent_refunds_exceeding_limit_second_rejected() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "M"), &str(&env, "D"), &str(&env, "E"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 1000);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+
+    // First refund: 700 — pending_refund_amount becomes 700.
+    client.initiate_refund(&payer, &bytes(&env, "R_RACE_A"), &order.order_id, &700, &str(&env, "first"));
+
+    // Second refund: 400 — refunded(0) + pending(700) + new(400) = 1100 > 1000 → must fail.
+    assert_eq!(
+        client.try_initiate_refund(&payer, &bytes(&env, "R_RACE_B"), &order.order_id, &400, &str(&env, "second")),
+        Err(Ok(PaymentError::RefundAmountExceedsPayment)),
+        "second refund must be rejected because pending_refund_amount already reserves 700"
+    );
+
+    // Verify pending_refund_amount is still tracking the first refund correctly.
+    let record = client.get_payment_by_id(&payer, &order.order_id);
+    assert_eq!(record.pending_refund_amount, 700);
+    assert_eq!(record.refunded_amount, 0);
+}
+
+/// Rejecting a pending refund decrements pending_refund_amount, freeing the
+/// reserved amount so a new refund can use it.
+#[test]
+fn test_rejected_refund_releases_pending_amount() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "M"), &str(&env, "D"), &str(&env, "E"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 1000);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+
+    // Initiate a refund for 700 — occupies 700 of pending.
+    client.initiate_refund(&payer, &bytes(&env, "R_REL_1"), &order.order_id, &700, &str(&env, "to be rejected"));
+
+    // A second 400-refund would exceed the limit while R_REL_1 is pending.
+    assert_eq!(
+        client.try_initiate_refund(&payer, &bytes(&env, "R_REL_2"), &order.order_id, &400, &str(&env, "blocked")),
+        Err(Ok(PaymentError::RefundAmountExceedsPayment))
+    );
+
+    // Merchant rejects R_REL_1 — pending_refund_amount must drop back to 0.
+    client.reject_refund(&merchant, &bytes(&env, "R_REL_1"), &None);
+
+    let record = client.get_payment_by_id(&payer, &order.order_id);
+    assert_eq!(record.pending_refund_amount, 0, "rejection must release the reserved amount");
+
+    // Now the 400-refund should succeed since the slot is free.
+    client.initiate_refund(&payer, &bytes(&env, "R_REL_2"), &order.order_id, &400, &str(&env, "now unblocked"));
+    let record2 = client.get_payment_by_id(&payer, &order.order_id);
+    assert_eq!(record2.pending_refund_amount, 400);
+}
