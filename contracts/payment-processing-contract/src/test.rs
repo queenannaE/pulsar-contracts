@@ -387,6 +387,104 @@ fn test_payment_expired_fails() {
     );
 }
 
+// ── SC-014: validate_order_id charset and length tests ────────────────────────
+
+/// Helper to attempt a payment with an arbitrary order_id bytes value.
+fn try_payment_with_order_id(
+    env: &Env,
+    client: &PaymentContractClient,
+    order_id_bytes: &[u8],
+) -> Result<(), soroban_sdk::Error> {
+    let admin = Address::generate(env);
+    let merchant = Address::generate(env);
+    let payer = Address::generate(env);
+    let token = create_token(env, &admin);
+    client.set_admin(&admins(env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(env, "Store"),
+        &str(env, "desc"),
+        &str(env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(env, &token, &payer, 5000);
+    let mut order = make_order(env, &merchant, &payer, &token);
+    order.order_id = Bytes::from_slice(env, order_id_bytes);
+    let (_pk, sig) = sign_order(env, &order);
+    client
+        .try_process_payment_with_signature(&payer, &order, &sig, &zero_key(env))
+        .map_err(|e| e.unwrap())
+}
+
+#[test]
+fn test_order_id_empty_rejected() {
+    // SC-014: empty order_id must return InvalidInput.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"");
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
+#[test]
+fn test_order_id_exactly_64_bytes_accepted() {
+    // SC-014: order_id of exactly 64 alphanumeric bytes must be accepted.
+    let (env, client) = setup();
+    let id = b"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6a7b8c9d0e1f2";
+    assert_eq!(id.len(), 64);
+    let result = try_payment_with_order_id(&env, &client, id);
+    assert!(result.is_ok(), "64-byte alphanumeric order_id should be accepted");
+}
+
+#[test]
+fn test_order_id_65_bytes_rejected() {
+    // SC-014: order_id of 65 bytes must be rejected.
+    let (env, client) = setup();
+    let id = b"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6a7b8c9d0e1f2X";
+    assert_eq!(id.len(), 65);
+    let result = try_payment_with_order_id(&env, &client, id);
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
+#[test]
+fn test_order_id_hyphen_underscore_accepted() {
+    // SC-014: hyphens and underscores are part of the allowed charset.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"order-001_ABC");
+    assert!(result.is_ok(), "order_id with hyphens and underscores should be accepted");
+}
+
+#[test]
+fn test_order_id_space_rejected() {
+    // SC-014: spaces are outside the allowed charset.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"order 001");
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
+#[test]
+fn test_order_id_dot_rejected() {
+    // SC-014: dots are outside the allowed charset.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"order.001");
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
+#[test]
+fn test_order_id_slash_rejected() {
+    // SC-014: forward-slashes are outside the allowed charset.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"order/001");
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
+#[test]
+fn test_order_id_null_byte_rejected() {
+    // SC-014: null bytes are outside the allowed charset.
+    let (env, client) = setup();
+    let result = try_payment_with_order_id(&env, &client, b"order\x00001");
+    assert_eq!(result, Err(PaymentError::InvalidInput.into()));
+}
+
 #[test]
 fn test_global_stats_overflow_fails() {
     let (env, client) = setup();

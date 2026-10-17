@@ -89,14 +89,40 @@ pub fn validate_merchant_fields(
     Ok(())
 }
 
-/// Validate that `order_id` is non-empty.
+/// Validate that `order_id` is non-empty, at most 64 bytes, and contains only
+/// alphanumeric characters plus `-` and `_` (i.e. the character set
+/// `[A-Za-z0-9\-_]`).
+///
+/// # Errors
+/// Returns [`PaymentError::InvalidInput`] when:
+/// - the byte slice is empty,
+/// - the byte slice exceeds 64 bytes, or
+/// - any byte is outside the allowed character set.
+///
+/// Enforcing a maximum length and a restricted character set prevents storage
+/// inflation attacks where an attacker submits an arbitrarily long or specially
+/// crafted order ID.
 pub fn validate_order_id(order_id: &Bytes) -> Result<(), PaymentError> {
-    // Enforce non-empty, max 64 bytes
-    let len = order_id.len();
+    let len = order_id.len() as usize;
+
+    // Rule 1: must be non-empty.
+    // Rule 2: must not exceed 64 bytes (SC-014).
     if len == 0 || len > 64 {
         return Err(PaymentError::InvalidInput);
     }
-    // character check is omitted for Bytes as it's harder in no_std without String
+
+    // Rule 3: only alphanumeric characters, hyphens, and underscores are
+    // allowed (SC-014).  We copy the bytes into a stack buffer so we can
+    // inspect each byte without heap allocation.
+    let mut buf = [0u8; 64];
+    order_id.copy_into_slice(&mut buf[..len]);
+    for &b in buf[..len].iter() {
+        let allowed = b.is_ascii_alphanumeric() || b == b'-' || b == b'_';
+        if !allowed {
+            return Err(PaymentError::InvalidInput);
+        }
+    }
+
     Ok(())
 }
 
