@@ -754,6 +754,7 @@ The contract implements a **hybrid analytics approach**:
 | `refund_approved` | `approve_refund` |
 | `refund_rejected` | `reject_refund` |
 | `refund_executed` | `execute_refund` |
+| `payment_status_updated` | `execute_refund` — payload: `(order_id, new_status, caller)` |
 | `multisig_initiated` | `initiate_multisig_payment` |
 | `multisig_signed` | `sign_multisig_payment` |
 | `multisig_executed` | `execute_multisig_payment` |

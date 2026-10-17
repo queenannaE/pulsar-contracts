@@ -446,6 +446,23 @@ fn test_successful_refund_flow() {
 }
 
 #[test]
+fn test_update_payment_status_emits_event() {
+    let (env, client) = setup();
+    let (_admin, merchant, payer, _token) = setup_paid_order(&env, &client);
+    client.initiate_refund(&payer, &bytes(&env, "R_EVT"), &bytes(&env, "ORDER_001"), &500, &str(&env, "reason"));
+    client.approve_refund(&merchant, &bytes(&env, "R_EVT"), &None);
+    let before = env.events().all().len();
+    client.execute_refund(&merchant, &bytes(&env, "R_EVT"));
+    // execute_refund must emit both refund_executed and payment_status_updated
+    assert!(
+        env.events().all().len() >= before + 2,
+        "payment_status_updated event must be emitted on execute_refund"
+    );
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.status, PaymentStatus::PartiallyRefunded);
+}
+
+#[test]
 fn test_full_refund_flow_with_balance_assertions() {
     let (env, client) = setup();
     let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);

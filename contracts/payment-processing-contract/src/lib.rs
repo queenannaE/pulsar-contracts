@@ -930,6 +930,10 @@ impl PaymentContract {
             (String::from_str(&env, "refund_executed"),),
             (refund_id, refund.amount),
         );
+        env.events().publish(
+            (String::from_str(&env, "payment_status_updated"),),
+            (record.order_id, record.status, caller),
+        );
         Ok(())
     }
 
