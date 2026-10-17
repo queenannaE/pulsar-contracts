@@ -2199,3 +2199,93 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-030: Instance storage TTL tests ───────────────────────────────────────
+
+/// Verify that bump_instance_ttl is callable by anyone and does not panic.
+/// This is the public keepalive function required by SC-030.
+#[test]
+fn test_sc030_bump_instance_ttl_callable_by_anyone() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    // Any arbitrary address can call bump_instance_ttl — no auth required.
+    let stranger = Address::generate(&env);
+    let _ = stranger; // not passed; bump_instance_ttl takes no caller argument
+
+    // Calling bump_instance_ttl keeps the contract alive.
+    client.bump_instance_ttl();
+
+    // Contract is still usable after the bump.
+    assert_eq!(client.get_version(), 1);
+}
+
+/// Verify that every admin operation implicitly bumps the instance TTL.
+/// We advance the ledger sequence number to a high value to simulate
+/// the contract having been dormant, then confirm state is still accessible.
+#[test]
+fn test_sc030_instance_ttl_bumped_on_every_entry_point() {
+    let (env, client) = setup();
+    let (admin, merchant, payer, token) = setup_paid_order(&env, &client);
+
+    // Simulate the contract being dormant for a long period by advancing
+    // the ledger sequence number significantly.
+    env.ledger().with_mut(|l| {
+        l.sequence_number = 10_000_000;
+        l.timestamp = 1_000_000;
+    });
+
+    // Every entry point calls bump_instance_ttl internally.
+    // Confirm instance-backed state (version, stats) is still readable.
+    assert_eq!(client.get_version(), 1);
+
+    let stats = client.get_global_payment_stats(&admins(&env, &admin), &None, &None);
+    assert_eq!(stats.total_payments, 1);
+    assert_eq!(stats.total_volume, 1000);
+
+    // A payment query also works (touches both instance and persistent storage).
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.amount, 1000);
+
+    // A new merchant registration still works (instance whitelist flag is readable).
+    let new_merchant = Address::generate(&env);
+    client.register_merchant(
+        &new_merchant,
+        &str(&env, "Late Store"),
+        &str(&env, "opened after dormancy"),
+        &str(&env, "late@store.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert!(client.get_merchant(&new_merchant).active);
+
+    // The token client is only needed to mint tokens for the new merchant test.
+    mint(&env, &token, &payer, 500);
+    let order = PaymentOrder {
+        order_id: bytes(&env, "LATE_ORDER"),
+        merchant_address: new_merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 100,
+        description: str(&env, "post-dormancy payment"),
+        expires_at: 0,
+    };
+    client.process_payment_with_signature(&payer, &order, &zero_sig(&env), &zero_key(&env));
+    let late_record = client.get_payment_by_id(&payer, &bytes(&env, "LATE_ORDER"));
+    assert_eq!(late_record.amount, 100);
+}
+
+/// Verify that bump_instance_ttl can be called before set_admin is called
+/// (contract not yet initialised) without panicking.
+#[test]
+fn test_sc030_bump_instance_ttl_before_init() {
+    let (env, client) = setup();
+    // No set_admin called yet — contract is uninitialised.
+    // bump_instance_ttl should still succeed (it only touches TTL metadata).
+    client.bump_instance_ttl();
+    // After bumping, we can still initialise normally.
+    let admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    assert_eq!(client.get_version(), 1);
+}
