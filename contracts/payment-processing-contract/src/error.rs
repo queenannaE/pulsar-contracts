@@ -14,6 +14,8 @@ pub enum PaymentError {
     MerchantNotFound = 10,
     MerchantAlreadyRegistered = 11,
     MerchantInactive = 12,
+    /// Attempted to reactivate a merchant that is already active.
+    MerchantAlreadyActive = 13,
 
     // Payment
     PaymentNotFound = 20,

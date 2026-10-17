@@ -2199,3 +2199,134 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-024: reactivate_merchant tests ────────────────────────────────────────
+
+/// Verifies that an admin can reactivate a deactivated merchant and that the
+/// merchant can subsequently process payments.
+/// Closes: https://github.com/queenannaE/pulsar-contracts/issues/24
+#[test]
+fn test_reactivate_merchant_by_admin_success() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+
+    // Deactivate the merchant.
+    client.deactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+    assert!(!client.get_merchant(&merchant).active, "merchant should be inactive after deactivation");
+
+    // Reactivate via admin.
+    client.reactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+    assert!(client.get_merchant(&merchant).active, "merchant should be active after reactivation");
+}
+
+#[test]
+fn test_reactivate_merchant_by_self_success() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+
+    // Merchant deactivates themselves.
+    client.deactivate_merchant(&merchant, &None);
+    assert!(!client.get_merchant(&merchant).active);
+
+    // Merchant reactivates themselves.
+    client.reactivate_merchant(&merchant, &None);
+    assert!(client.get_merchant(&merchant).active, "merchant should be active after self-reactivation");
+}
+
+#[test]
+fn test_reactivate_merchant_then_process_payment() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+
+    // Deactivate then reactivate.
+    client.deactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+    client.reactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+
+    // Payment should succeed after reactivation.
+    let order = PaymentOrder {
+        order_id: bytes(&env, "ORDER_REACT_001"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Post-reactivation payment"),
+        expires_at: 0,
+    };
+    let (_pk, sig) = sign_order(&env, &order);
+    client.process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_REACT_001"));
+    assert_eq!(record.amount, 1000);
+}
+
+#[test]
+fn test_reactivate_already_active_merchant_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+
+    // Merchant is already active — reactivation should fail.
+    let result = client.try_reactivate_merchant(&merchant, &Some(admins(&env, &admin)));
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::MerchantAlreadyActive)),
+        "Expected MerchantAlreadyActive when reactivating an already-active merchant"
+    );
+}
+
+#[test]
+fn test_reactivate_nonexistent_merchant_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    let result = client.try_reactivate_merchant(&stranger, &Some(admins(&env, &admin)));
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::MerchantNotFound)),
+        "Expected MerchantNotFound for non-existent merchant"
+    );
+}
