@@ -293,8 +293,28 @@ impl PaymentContract {
         storage::push_global_payment_id(&env, &order.order_id);
         storage::increment_payment_stats(&env, order.amount)?;
 
-        // Commit payment state before the external token transfer to reduce
-        // re-entrancy risk in external contracts.
+        // ── Re-entrancy model (SC-011) ───────────────────────────────────────
+        // All state mutations (payment record, index updates, stats) are
+        // committed to persistent storage BEFORE the external token transfer
+        // call below. This follows the Checks-Effects-Interactions (CEI)
+        // pattern and is the primary defence against re-entrancy.
+        //
+        // Why Soroban further limits re-entrancy risk:
+        // Soroban's execution model enforces contract-level authorisation at
+        // the VM boundary. A re-entrant call from a malicious token contract
+        // back into THIS contract would require a fresh authorisation context
+        // that is not present in the current transaction. In practice:
+        //   1. `payer.require_auth()` has already been consumed for this
+        //      invocation; the same auth cannot be reused.
+        //   2. Soroban does not support call-stack re-entry into the same
+        //      contract instance within a single transaction in the same
+        //      authorisation scope.
+        //
+        // Taken together, the CEI ordering plus the Soroban execution model
+        // means that even if the token contract attempts a re-entrant call,
+        // the state it observes will already reflect the completed payment,
+        // causing any duplicate `process_payment_with_signature` call to fail
+        // with `PaymentAlreadyExists`.
         let token_client = token::Client::new(&env, &order.token);
         token_client.transfer(&payer, &order.merchant_address, &order.amount);
         env.events().publish(
@@ -924,6 +944,17 @@ impl PaymentContract {
         storage::push_all_refund_id(&env, &refund_id);
         storage::decrement_order_refund_count(&env, &refund.order_id);
         storage::increment_refund_stats(&env, refund.amount)?;
+
+        // ── Re-entrancy model (SC-011) ───────────────────────────────────────
+        // All state mutations (payment record update, refund status, stats)
+        // are committed to persistent storage BEFORE the external token
+        // transfer below. This is the CEI (Checks-Effects-Interactions)
+        // pattern. If a malicious token contract attempts to re-enter
+        // execute_refund, the refund status is already Completed and the
+        // call will fail with RefundNotApproved. See the identical comment
+        // in process_payment_with_signature for a full explanation of the
+        // Soroban execution model and why re-entrancy is further constrained
+        // at the VM level.
         let token_client = token::Client::new(&env, &record.token);
         token_client.transfer(&record.merchant_address, &record.payer, &refund.amount);
         env.events().publish(

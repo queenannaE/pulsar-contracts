@@ -47,6 +47,41 @@ The following source files are in scope:
 
 ---
 
+## Re-entrancy Model (SC-011)
+
+Token transfers in `process_payment_with_signature` and `execute_refund` call external token contracts. The following two layers of defence prevent a malicious token contract from exploiting re-entrancy.
+
+### Layer 1 — Checks-Effects-Interactions (CEI)
+
+Both functions commit **all** state mutations (payment/refund records, index lists, statistics) to persistent storage **before** calling `token::Client::transfer`. This is the standard CEI pattern. If a re-entrant callback tries to invoke either function again with the same IDs, the idempotency checks (`PaymentAlreadyExists`, `RefundNotApproved`) will reject it immediately.
+
+```
+// process_payment_with_signature execution order:
+1. Checks (validate inputs, check duplicates, verify signature)
+2. Effects (save_payment, push indexes, increment_stats)  ← state committed
+3. Interaction (token_client.transfer)                    ← external call last
+```
+
+```
+// execute_refund execution order:
+1. Checks (get refund, verify Approved status, verify caller)
+2. Effects (save_payment, refund.status = Completed, save_refund, push index, inc stats)
+3. Interaction (token_client.transfer)                    ← external call last
+```
+
+### Layer 2 — Soroban execution model
+
+Soroban's VM enforces additional constraints that limit re-entrancy beyond CEI:
+
+- **Single-use authorisation:** `require_auth()` consumes the caller's authorisation context for the current invocation. A re-entrant call from within the token contract would require a fresh, independent authorisation context — one that was not granted in the original transaction.
+- **No in-transaction re-entry:** Soroban does not support re-entry into the same contract instance from within the same invocation stack under the same authorisation scope.
+
+### Security sign-off
+
+This analysis covers SC-011. A full independent security audit (SEC-001) is still required before mainnet deployment. The audit scope must include re-entrancy scenarios with malicious token contracts.
+
+---
+
 ## Recommended Auditors
 
 The following firms have demonstrated experience auditing Soroban/Stellar smart contracts or Rust-based blockchain code:
