@@ -2199,3 +2199,69 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-023: Global stats total_volume overflow tests ─────────────────────────
+
+/// Verifies that `increment_payment_stats` uses `checked_add` and returns
+/// `ArithmeticError` when `total_volume` would overflow `i128::MAX`.
+/// Closes: https://github.com/queenannaE/pulsar-contracts/issues/23
+#[test]
+fn test_global_stats_total_volume_overflow_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    // Mint enough tokens to cover i128::MAX (mock env does not enforce real balances)
+    mint(&env, &token, &payer, i128::MAX);
+
+    // First payment: amount = i128::MAX — should succeed and set total_volume to i128::MAX.
+    let order_max = PaymentOrder {
+        order_id: bytes(&env, "ORDER_OVERFLOW_1"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: i128::MAX,
+        description: str(&env, "max payment"),
+        expires_at: 0,
+    };
+    let (_pk, sig) = sign_order(&env, &order_max);
+    client.process_payment_with_signature(&payer, &order_max, &sig, &zero_key(&env));
+
+    let stats = client.get_global_payment_stats();
+    assert_eq!(stats.total_volume, i128::MAX, "total_volume should equal i128::MAX after first payment");
+    assert_eq!(stats.total_payments, 1);
+
+    // Second payment: adding any positive amount to i128::MAX would overflow.
+    // The contract must reject this with ArithmeticError.
+    let order_overflow = PaymentOrder {
+        order_id: bytes(&env, "ORDER_OVERFLOW_2"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 1,
+        description: str(&env, "overflow attempt"),
+        expires_at: 0,
+    };
+    let (_pk2, sig2) = sign_order(&env, &order_overflow);
+    let result = client.try_process_payment_with_signature(
+        &payer,
+        &order_overflow,
+        &sig2,
+        &zero_key(&env),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::ArithmeticError)),
+        "Expected ArithmeticError when total_volume would overflow i128::MAX"
+    );
+}
