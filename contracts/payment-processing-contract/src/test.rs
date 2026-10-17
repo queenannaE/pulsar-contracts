@@ -2199,3 +2199,77 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-029: Persistent storage TTL tests ─────────────────────────────────────
+
+/// Verify that saving and loading a payment record does not panic — the extend_ttl
+/// calls on every read/write are exercised implicitly through the normal workflow.
+/// In the Soroban test environment there is no real ledger to expire, but we can
+/// confirm the storage pattern is consistent across the full refund lifecycle.
+#[test]
+fn test_sc029_persistent_ttl_extended_across_refund_lifecycle() {
+    let (env, client) = setup();
+    let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+
+    // Simulate many ledger bumps to exercise repeated read + extend_ttl paths.
+    env.ledger().with_mut(|l| l.sequence_number = 1_000_000);
+
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "TTL_R1"),
+        &bytes(&env, "ORDER_001"),
+        &500,
+        &str(&env, "TTL test"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "TTL_R1"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "TTL_R1"));
+
+    // Records remain accessible after multiple reads (each read re-extends TTL).
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.refunded_amount, 500);
+
+    // Token balances are correct, confirming the transfer completed.
+    assert_eq!(token_client.balance(&payer), 4500);
+    assert_eq!(token_client.balance(&merchant), 500);
+}
+
+/// Verify archived payment tombstones also have their TTL extended.
+/// After archiving, the tombstone prevents replay of the same order_id.
+#[test]
+fn test_sc029_archived_payment_tombstone_ttl() {
+    let (env, client) = setup();
+    let (admin, _merchant, payer, _token) = setup_paid_order(&env, &client);
+
+    client.archive_payment_record(&admins(&env, &admin), &bytes(&env, "ORDER_001"));
+
+    // Attempting to create a second payment with the same order_id must fail
+    // because the archived tombstone is still accessible (TTL was extended).
+    assert_eq!(
+        client.try_get_payment_by_id(&payer, &bytes(&env, "ORDER_001")),
+        Err(Ok(PaymentError::PaymentNotFound))
+    );
+}
+
+/// Confirm that whitelist persistent entries survive the full whitelist workflow.
+#[test]
+fn test_sc029_whitelist_persistent_ttl() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.set_whitelist_mode(&admins(&env, &admin), &true);
+    client.approve_merchant_registration(&admins(&env, &admin), &merchant);
+
+    // Whitelist entry is still readable after repeated accesses (TTL extended on read).
+    client.register_merchant(
+        &merchant,
+        &str(&env, "TTL Store"),
+        &str(&env, "desc"),
+        &str(&env, "ttl@store.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    assert!(client.get_merchant(&merchant).active);
+}

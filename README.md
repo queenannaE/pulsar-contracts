@@ -806,7 +806,28 @@ Soroban persistent storage entries expire after a ledger TTL. Without active ren
 - A record's TTL is reset to ~1 year on every read or write.
 - Records that are never accessed will expire after ~1 year and be evicted by the network.
 - Frequently accessed records (active merchants, recent payments) are automatically kept alive.
-- Instance storage (admin, config, stats) is managed by the Soroban host and does not require manual TTL extension.
+
+**Covered entry types** (all persistent keys have TTL extended on read and write):
+
+| Entry type | Storage key |
+|---|---|
+| Payment records | `DataKey::Payment(order_id)` |
+| Archived payment tombstones | `DataKey::ArchivedPayment(order_id)` |
+| Merchant profiles | `DataKey::Merchant(address)` |
+| Merchant payment index | `DataKey::MerchantPayments(address)` |
+| Payer payment index | `DataKey::PayerPayments(address)` |
+| Global payment index | `DataKey::GlobalPaymentIndex` |
+| Refund records | `DataKey::Refund(refund_id)` |
+| All-refunds index | `DataKey::AllRefunds` |
+| Per-order refund count | `DataKey::OrderRefundCount(order_id)` |
+| Multi-sig payments | `DataKey::Multisig(payment_id)` |
+| Whitelist entries | `DataKey::Whitelist(address)` |
+| Token allowlist entries | `DataKey::AllowedToken(token)` |
+| Subscription states | `DataKey::Subscription(id)` |
+| Merchant subscription index | `DataKey::MerchantSubscriptions(address)` |
+| Merchant stats | `DataKey::MerchantStats(address)` |
+
+**Instance storage** (admin config, global stats, cleanup period, multisig expiry) uses a separate TTL managed via `storage::bump_instance_ttl()`, which is called at the start of every public contract invocation. A public `bump_instance_ttl(env)` function is also available so anyone can keep the contract alive during periods of low activity.
 
 ---
 

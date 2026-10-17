@@ -113,16 +113,22 @@ pub fn remove_payment(env: &Env, order_id: &Bytes) {
 // ── Archived payments (tombstones) ──────────────────────────────────────────
 
 pub fn is_archived_payment(env: &Env, order_id: &Bytes) -> bool {
-    env.storage()
-        .persistent()
-        .get(&DataKey::ArchivedPayment(order_id.clone()))
-        .unwrap_or(false)
+    let key = DataKey::ArchivedPayment(order_id.clone());
+    let result: bool = env.storage().persistent().get(&key).unwrap_or(false);
+    if result {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+    }
+    result
 }
 
 pub fn set_archived_payment(env: &Env, order_id: &Bytes) {
+    let key = DataKey::ArchivedPayment(order_id.clone());
+    env.storage().persistent().set(&key, &true);
     env.storage()
         .persistent()
-        .set(&DataKey::ArchivedPayment(order_id.clone()), &true);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
 }
 
 // ── Payment index lists ───────────────────────────────────────────────────────
@@ -299,10 +305,14 @@ pub fn push_all_refund_id(env: &Env, refund_id: &Bytes) {
 // ── Per-order pending refund count ────────────────────────────────────────────
 
 pub fn get_order_refund_count(env: &Env, order_id: &Bytes) -> u32 {
-    env.storage()
-        .persistent()
-        .get(&DataKey::OrderRefundCount(order_id.clone()))
-        .unwrap_or(0)
+    let key = DataKey::OrderRefundCount(order_id.clone());
+    let result: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+    if result > 0 {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+    }
+    result
 }
 
 pub fn increment_order_refund_count(env: &Env, order_id: &Bytes) {
@@ -360,16 +370,22 @@ pub fn set_whitelist_enabled(env: &Env, enabled: bool) {
 }
 
 pub fn is_whitelisted(env: &Env, address: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Whitelist(address.clone()))
-        .unwrap_or(false)
+    let key = DataKey::Whitelist(address.clone());
+    let result: bool = env.storage().persistent().get(&key).unwrap_or(false);
+    if result {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+    }
+    result
 }
 
 pub fn set_whitelisted(env: &Env, address: &Address, approved: bool) {
+    let key = DataKey::Whitelist(address.clone());
+    env.storage().persistent().set(&key, &approved);
     env.storage()
         .persistent()
-        .set(&DataKey::Whitelist(address.clone()), &approved);
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -599,16 +615,20 @@ pub fn push_merchant_subscription_id(env: &Env, merchant: &Address, subscription
 // ── Merchant stats ────────────────────────────────────────────────────────────
 
 pub fn get_merchant_stats(env: &Env, merchant: &Address) -> MerchantStats {
-    env.storage()
-        .persistent()
-        .get(&DataKey::MerchantStats(merchant.clone()))
-        .unwrap_or(MerchantStats {
-            merchant_address: merchant.clone(),
-            total_payments: 0,
-            total_volume: 0,
-            total_refunds: 0,
-            total_refund_volume: 0,
-        })
+    let key = DataKey::MerchantStats(merchant.clone());
+    let result: Option<MerchantStats> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_LEDGERS);
+    }
+    result.unwrap_or(MerchantStats {
+        merchant_address: merchant.clone(),
+        total_payments: 0,
+        total_volume: 0,
+        total_refunds: 0,
+        total_refund_volume: 0,
+    })
 }
 
 pub fn save_merchant_stats(env: &Env, stats: &MerchantStats) {
