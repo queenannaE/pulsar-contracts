@@ -2199,3 +2199,95 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── SC-022: PaymentOrder.payer field validation tests ────────────────────────
+
+/// Verifies that process_payment_with_signature returns InvalidInput when
+/// order.payer does not match the payer function parameter, preventing
+/// a payer substitution exploit.
+/// Closes: https://github.com/queenannaE/pulsar-contracts/issues/22
+#[test]
+fn test_payer_field_mismatch_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let real_payer = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let token = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &real_payer, 5000);
+    mint(&env, &token, &attacker, 5000);
+
+    // Build an order where order.payer = real_payer but the function-level
+    // payer argument = attacker.  This simulates the mismatch exploit.
+    let order = PaymentOrder {
+        order_id: bytes(&env, "ORDER_MISMATCH_001"),
+        merchant_address: merchant.clone(),
+        payer: real_payer.clone(), // order.payer references real_payer
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Mismatch test"),
+        expires_at: 0,
+    };
+    let (_pk, sig) = sign_order(&env, &order);
+
+    // Caller authenticates as attacker, but order.payer is real_payer — must fail.
+    let result = client.try_process_payment_with_signature(
+        &attacker, // payer parameter ≠ order.payer
+        &order,
+        &sig,
+        &zero_key(&env),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PaymentError::InvalidInput)),
+        "Expected InvalidInput when order.payer does not match payer parameter"
+    );
+}
+
+/// Verifies that a payment succeeds when order.payer matches the payer parameter.
+#[test]
+fn test_payer_field_match_succeeds() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+
+    let order = PaymentOrder {
+        order_id: bytes(&env, "ORDER_MATCH_001"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(), // order.payer == payer parameter
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Match test"),
+        expires_at: 0,
+    };
+    let (_pk, sig) = sign_order(&env, &order);
+
+    // Should succeed: order.payer == payer parameter.
+    client.process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_MATCH_001"));
+    assert_eq!(record.payer, payer);
+    assert_eq!(record.amount, 1000);
+}
