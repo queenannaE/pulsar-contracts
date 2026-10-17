@@ -896,6 +896,78 @@ fn test_archive_payment_record_removes_from_indexes() {
     assert_eq!(client.get_payer_payment_history(&payer, &None, &10, &None, &SortField::Date, &SortOrder::Ascending).total, 0);
 }
 
+/// SC-027: archiving one payment from a multi-payment index must leave remaining
+/// records intact and return the correct count, not silently corrupt pagination.
+#[test]
+fn test_archive_payment_record_correct_count_after_archival() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 10_000);
+
+    let sig = BytesN::from_array(&env, &[0u8; 64]);
+    let key = BytesN::from_array(&env, &[0u8; 32]);
+
+    // Process two payments for the same merchant+payer.
+    let order1 = PaymentOrder {
+        order_id: bytes(&env, "ARCH_001"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 1000,
+        description: str(&env, "Payment 1"),
+        expires_at: 0,
+    };
+    let order2 = PaymentOrder {
+        order_id: bytes(&env, "ARCH_002"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token.clone(),
+        amount: 2000,
+        description: str(&env, "Payment 2"),
+        expires_at: 0,
+    };
+    client.process_payment_with_signature(&payer, &order1, &sig, &key);
+    client.process_payment_with_signature(&payer, &order2, &sig, &key);
+
+    // Both payments are indexed.
+    assert_eq!(
+        client.get_merchant_payment_history(&merchant, &None, &10, &None, &SortField::Date, &SortOrder::Ascending).total,
+        2
+    );
+    assert_eq!(
+        client.get_payer_payment_history(&payer, &None, &10, &None, &SortField::Date, &SortOrder::Ascending).total,
+        2
+    );
+
+    // Archive the first payment.
+    client.archive_payment_record(&admins(&env, &admin), &bytes(&env, "ARCH_001"));
+
+    // The second payment must still appear; count must be exactly 1.
+    let merchant_page = client.get_merchant_payment_history(
+        &merchant, &None, &10, &None, &SortField::Date, &SortOrder::Ascending,
+    );
+    assert_eq!(merchant_page.total, 1);
+    assert_eq!(merchant_page.records.get(0).unwrap().order_id, bytes(&env, "ARCH_002"));
+
+    let payer_page = client.get_payer_payment_history(
+        &payer, &None, &10, &None, &SortField::Date, &SortOrder::Ascending,
+    );
+    assert_eq!(payer_page.total, 1);
+    assert_eq!(payer_page.records.get(0).unwrap().order_id, bytes(&env, "ARCH_002"));
+}
+
 #[test]
 fn test_archive_payment_record_non_admin_fails() {
     let (env, client) = setup();
