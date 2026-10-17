@@ -2199,3 +2199,172 @@ fn test_signature_over_different_amount_rejected() {
         "Expected signature verification to fail when amount differs, but got Ok"
     );
 }
+
+// ── T-002: Refund lifecycle balance assertions ────────────────────────────────
+//
+// Acceptance criteria:
+//   - Assert payer balance before and after execute_refund
+//   - Assert merchant balance decreases by the refund amount
+//   - Test covers partial and full refund scenarios
+
+/// T-002-A: Partial refund — explicit payer and merchant balance assertions.
+/// Captures balances before and after execute_refund and verifies the delta.
+#[test]
+fn test_t002_partial_refund_balance_assertions() {
+    let (env, client) = setup();
+    let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+
+    // Balances after the initial payment: payer paid 1000, merchant received 1000.
+    let payer_after_payment = token_client.balance(&payer);
+    let merchant_after_payment = token_client.balance(&merchant);
+
+    // Initiate, approve, and execute a partial refund of 300.
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "T002_PARTIAL"),
+        &bytes(&env, "ORDER_001"),
+        &300,
+        &str(&env, "partial refund T002"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "T002_PARTIAL"), &None);
+
+    // Capture balances immediately before execute_refund.
+    let payer_before_execute = token_client.balance(&payer);
+    let merchant_before_execute = token_client.balance(&merchant);
+
+    client.execute_refund(&merchant, &bytes(&env, "T002_PARTIAL"));
+
+    // Capture balances immediately after execute_refund.
+    let payer_after_execute = token_client.balance(&payer);
+    let merchant_after_execute = token_client.balance(&merchant);
+
+    // Payer balance must increase by exactly the refund amount.
+    assert_eq!(
+        payer_after_execute - payer_before_execute,
+        300,
+        "payer balance should increase by refund amount"
+    );
+    // Merchant balance must decrease by exactly the refund amount.
+    assert_eq!(
+        merchant_before_execute - merchant_after_execute,
+        300,
+        "merchant balance should decrease by refund amount"
+    );
+    // Net effect: payer is 300 less than at payment time (paid 1000, got back 300).
+    assert_eq!(payer_after_execute, payer_after_payment - 700);
+    // Merchant received 1000 and refunded 300 → net 700.
+    assert_eq!(merchant_after_execute, merchant_after_payment - 300);
+
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.refunded_amount, 300);
+    assert_eq!(record.status, PaymentStatus::PartiallyRefunded);
+}
+
+/// T-002-B: Full refund — payer recovers entire payment amount, merchant nets zero.
+#[test]
+fn test_t002_full_refund_balance_assertions() {
+    let (env, client) = setup();
+    let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+
+    // Record balances right after payment.
+    let payer_after_payment = token_client.balance(&payer);   // 5000 - 1000 = 4000
+    let merchant_after_payment = token_client.balance(&merchant); // 1000
+
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "T002_FULL"),
+        &bytes(&env, "ORDER_001"),
+        &1000,
+        &str(&env, "full refund T002"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "T002_FULL"), &None);
+
+    let payer_before_execute = token_client.balance(&payer);
+    let merchant_before_execute = token_client.balance(&merchant);
+
+    client.execute_refund(&merchant, &bytes(&env, "T002_FULL"));
+
+    let payer_after_execute = token_client.balance(&payer);
+    let merchant_after_execute = token_client.balance(&merchant);
+
+    // Payer must recover the full payment amount.
+    assert_eq!(
+        payer_after_execute - payer_before_execute,
+        1000,
+        "payer balance should increase by full refund amount"
+    );
+    // Merchant must return the full payment amount.
+    assert_eq!(
+        merchant_before_execute - merchant_after_execute,
+        1000,
+        "merchant balance should decrease by full refund amount"
+    );
+    // Payer is back to their original balance (payer_after_payment + 1000 = 5000).
+    assert_eq!(payer_after_execute, payer_after_payment + 1000);
+    // Merchant net is zero (received 1000 then returned 1000).
+    assert_eq!(merchant_after_execute, merchant_after_payment - 1000);
+
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.refunded_amount, 1000);
+    assert_eq!(record.status, PaymentStatus::FullyRefunded);
+}
+
+/// T-002-C: Two sequential partial refunds that together equal the full payment.
+/// Verifies cumulative balance deltas are correct across both execute_refund calls.
+#[test]
+fn test_t002_sequential_partial_refunds_balance_assertions() {
+    let (env, client) = setup();
+    let (_admin, merchant, payer, token) = setup_paid_order(&env, &client);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+
+    let payer_after_payment = token_client.balance(&payer);
+    let merchant_after_payment = token_client.balance(&merchant);
+
+    // First partial refund: 600
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "T002_SEQ_1"),
+        &bytes(&env, "ORDER_001"),
+        &600,
+        &str(&env, "first partial"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "T002_SEQ_1"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "T002_SEQ_1"));
+
+    let payer_after_first = token_client.balance(&payer);
+    let merchant_after_first = token_client.balance(&merchant);
+
+    assert_eq!(payer_after_first - payer_after_payment, 600);
+    assert_eq!(merchant_after_payment - merchant_after_first, 600);
+
+    let record_after_first = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record_after_first.refunded_amount, 600);
+    assert_eq!(record_after_first.status, PaymentStatus::PartiallyRefunded);
+
+    // Second partial refund: 400 (brings total to 1000 = full refund)
+    client.initiate_refund(
+        &payer,
+        &bytes(&env, "T002_SEQ_2"),
+        &bytes(&env, "ORDER_001"),
+        &400,
+        &str(&env, "second partial"),
+    );
+    client.approve_refund(&merchant, &bytes(&env, "T002_SEQ_2"), &None);
+    client.execute_refund(&merchant, &bytes(&env, "T002_SEQ_2"));
+
+    let payer_after_second = token_client.balance(&payer);
+    let merchant_after_second = token_client.balance(&merchant);
+
+    assert_eq!(payer_after_second - payer_after_first, 400);
+    assert_eq!(merchant_after_first - merchant_after_second, 400);
+
+    // Cumulative: payer recovered 1000 total, merchant net zero.
+    assert_eq!(payer_after_second, payer_after_payment + 1000);
+    assert_eq!(merchant_after_second, merchant_after_payment - 1000);
+
+    let record_final = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record_final.refunded_amount, 1000);
+    assert_eq!(record_final.status, PaymentStatus::FullyRefunded);
+}
