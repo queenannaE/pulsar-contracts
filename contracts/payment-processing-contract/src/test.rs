@@ -131,6 +131,34 @@ fn test_get_version_after_set_admin() {
     assert_eq!(client.get_version(), 1);
 }
 
+/// SC-028: ContractVersion is stored in instance storage during set_admin.
+/// get_version before set_admin returns 0 (the default for missing keys).
+#[test]
+fn test_get_version_before_init_returns_zero() {
+    let (env, client) = setup();
+    // No set_admin called — version key is absent; must default to 0.
+    assert_eq!(client.get_version(), 0);
+}
+
+/// SC-028: upgrade() must be admin-only; a non-admin address must be rejected.
+///
+/// Note: a full end-to-end upgrade test (calling upgrade() with a real WASM
+/// hash) requires uploading compiled WASM bytes and is covered by integration
+/// tests. Unit tests can only verify the auth guard.
+#[test]
+fn test_upgrade_non_admin_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    client.set_admin(&admins(&env, &admin), &1);
+
+    let dummy_hash = BytesN::from_array(&env, &[0u8; 32]);
+    assert_eq!(
+        client.try_upgrade(&non_admin, &dummy_hash),
+        Err(Ok(PaymentError::Unauthorized))
+    );
+}
+
 #[test]
 fn test_ping() {
     let (env, client) = setup();
