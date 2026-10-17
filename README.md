@@ -920,6 +920,12 @@ A simple token-bucket or sliding-window limiter keyed on the caller's Stellar ad
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The `main` branch is protected: all changes require a pull request with at
+least 1 approving review and all CI checks passing. Direct pushes and
+force-pushes to `main` are disabled. See the
+[Branch Protection Rules](CONTRIBUTING.md#branch-protection-rules) section
+in CONTRIBUTING.md for the full list of required status checks.
+
 ---
 
 ## Code of Conduct

@@ -77,11 +77,40 @@ every commit, catching formatting and lint issues locally before CI sees them.
 
 The `main` branch is protected with the following enforced settings:
 
-- **Required reviews**: at least 1 approving review before merging.
-- **Required status checks**: all CI jobs (`test`, `build`, `security-audit`) must pass.
-- **No direct pushes**: commits must be submitted via a pull request; force-pushes are disabled.
+| Rule | Setting |
+|------|---------|
+| Required approving reviews | At least **1** before merging |
+| Dismiss stale reviews | Yes — a new push dismisses existing approvals |
+| Required status checks | All CI jobs must pass (see list below) |
+| Require branches to be up to date | Yes — branch must be up to date with `main` before merge |
+| No direct pushes | All changes must arrive via a pull request |
+| No force-pushes | `git push --force` to `main` is rejected |
+| No branch deletion | `main` cannot be deleted |
 
-These rules are enforced via GitHub branch protection settings. Contributors cannot bypass them.
+### Required CI status checks
+
+The following jobs in `.github/workflows/ci.yml` must all pass before merging:
+
+- `test (stable)` — unit tests on stable Rust toolchain
+- `test (1.79.0)` — unit tests on the declared MSRV
+- `build` — WASM artifact compiles and passes the binary size gate
+- `security-audit` — `cargo audit` reports no known vulnerabilities
+- `deny` — `cargo deny check` (licence and duplicate-crate policy)
+- `coverage` — generates test coverage report (warning only, does not block)
+
+### Why these rules exist
+
+- **Required review**: ensures at least one other maintainer has read every
+  change before it lands.
+- **Up-to-date branch**: prevents a PR that passed CI from landing on a `main`
+  that has since moved forward, which could re-introduce a regression.
+- **No direct push / no force-push**: the `main` branch is the source of truth
+  for contract deployments; every change must be traceable to a PR review.
+
+These rules are enforced via GitHub branch protection settings. Contributors
+cannot bypass them. Maintainers (repo admins) can view and edit the settings
+at:
+`https://github.com/queenannaE/pulsar-contracts/settings/branches`
 
 ## Pull Request Guidelines
 
