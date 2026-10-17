@@ -22,6 +22,8 @@ mod types;
 mod repro_tests;
 #[cfg(test)]
 mod prop_tests;
+#[cfg(test)]
+mod payer_payment_history_tests;
 
 use alloc::vec::Vec as RustVec;
 use soroban_sdk::{
