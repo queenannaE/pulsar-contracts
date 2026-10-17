@@ -235,13 +235,20 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore cargo-audit cache
+      - name: Restore cargo-audit binary cache
         id: cargo_audit_cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-audit
           key: ${{ runner.os }}-cargo-audit-0.21.2
           restore-keys: ${{ runner.os }}-cargo-audit-
+
+      - name: Restore advisory-db cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: ${{ runner.os }}-advisory-db-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-advisory-db-
 
       - name: Install cargo-audit
         if: steps.cargo_audit_cache.outputs.cache-hit != 'true'
