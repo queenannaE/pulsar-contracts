@@ -43,6 +43,7 @@ Pulsar is a comprehensive payment-processing smart contract for the Stellar Soro
 - [Error Codes](#error-codes)
 - [Storage Costs](#storage-costs)
 - [Roadmap](#roadmap)
+- [Known Limitations](#known-limitations)
 - [Contributing](#contributing)
 - [Code of Conduct](#code-of-conduct)
 - [License](#license)
@@ -968,6 +969,38 @@ Client → API Gateway (rate limit: N req/min per account) → Stellar RPC → C
 ```
 
 A simple token-bucket or sliding-window limiter keyed on the caller's Stellar address is sufficient. Libraries such as `express-rate-limit` (Node.js) or `slowapi` (Python) can be used for this purpose.
+
+## Known Limitations
+
+### `get_global_payment_stats` — date filtering is a no-op (SC-003)
+
+The `date_start` and `date_end` parameters of `get_global_payment_stats` were
+previously accepted but silently discarded, so callers always received all-time
+totals regardless of the requested window. This was fixed in SC-003 (see
+[`lib.rs`](contracts/payment-processing-contract/src/lib.rs)).
+
+> **Status:** Fixed in the current codebase. The note below is retained until
+> consumers of older deployed contract versions have migrated.
+
+**What it means for integrators on pre-SC-003 deployments:**
+
+- Passing `date_start` / `date_end` to `get_global_payment_stats` has **no
+  effect** — the function returns all-time totals every time.
+- Do **not** rely on the filtered result for time-bounded reporting; compute
+  the filter client-side from the raw payment list, or upgrade to a deployment
+  that includes the SC-003 fix.
+- This limitation does **not** affect `get_merchant_stats`, which has always
+  applied date filtering correctly.
+
+**Upgrading:** deploy the updated WASM (containing the SC-003 fix) and call
+`upgrade` with the new WASM hash. After the upgrade, `date_start` / `date_end`
+are applied correctly. The fix is a backwards-compatible change — callers that
+pass `null` for both bounds receive the same cached all-time result as before.
+
+This limitation note will be removed once SC-003 is confirmed resolved across
+all tracked deployments.
+
+---
 
 ## Contributing
 
