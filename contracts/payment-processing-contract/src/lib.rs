@@ -672,6 +672,33 @@ impl PaymentContract {
 
     // ── Payment processing ────────────────────────────────────────────────────
 
+    /// Process a payment by verifying an ed25519 merchant signature and transferring tokens.
+    ///
+    /// The payer authorises the call. The order payload is verified against the
+    /// merchant's registered `signing_public_key` (if one is set). Funds are
+    /// transferred atomically after the payment record is written to storage to
+    /// reduce re-entrancy risk.
+    ///
+    /// # Parameters
+    /// - `payer` — The address paying for the order; must be authenticated and
+    ///   must match `order.payer`.
+    /// - `order` — The [`PaymentOrder`] describing the transaction details.
+    /// - `signature` — 64-byte ed25519 signature of the XDR-serialised order,
+    ///   produced by the merchant's signing key.
+    /// - `merchant_public_key` — 32-byte ed25519 public key used to verify
+    ///   `signature`. Must match the merchant's registered key when one is set.
+    ///
+    /// # Returns
+    /// `Ok(())` on success. Emits `payment_processed`.
+    ///
+    /// # Errors
+    /// - [`PaymentError::InvalidInput`] if `order.payer` does not match `payer`.
+    /// - [`PaymentError::InvalidAmount`] if `order.amount` ≤ 0.
+    /// - [`PaymentError::PaymentAlreadyExists`] if `order.order_id` has already been processed.
+    /// - [`PaymentError::PaymentExpired`] if the order's `expires_at` is in the past.
+    /// - [`PaymentError::MerchantNotFound`] if the merchant is not registered.
+    /// - [`PaymentError::MerchantInactive`] if the merchant has been deactivated.
+    /// - [`PaymentError::InvalidSignature`] if signature verification fails.
     pub fn process_payment_with_signature(
         env: Env,
         payer: Address,
@@ -1093,6 +1120,28 @@ impl PaymentContract {
         Ok(stats)
     }
 
+    /// Return payment and refund statistics for a single merchant.
+    ///
+    /// The merchant may query their own stats. An admin may query any merchant.
+    /// When no date range is supplied the pre-computed cached counters are
+    /// returned in O(1). When a date range is supplied the function iterates
+    /// the merchant's payment list and filters by `paid_at` timestamp.
+    ///
+    /// # Parameters
+    /// - `caller` — The calling address; must be authenticated. Must be either
+    ///   `merchant` or an admin.
+    /// - `merchant` — The merchant address whose stats are requested.
+    /// - `date_start` — Optional Unix timestamp lower bound (inclusive).
+    /// - `date_end` — Optional Unix timestamp upper bound (inclusive).
+    ///
+    /// # Returns
+    /// A [`MerchantStats`] struct containing total payment count, total volume,
+    /// total refund count, and total refund volume for the merchant.
+    ///
+    /// # Errors
+    /// - [`PaymentError::Unauthorized`] if `caller` is neither `merchant` nor an
+    ///   admin.
+    /// - [`PaymentError::ArithmeticError`] on volume overflow.
     pub fn get_merchant_stats(
         env: Env,
         caller: Address,
@@ -1580,6 +1629,17 @@ impl PaymentContract {
         Ok(())
     }
 
+    /// Return the current status of a refund request.
+    ///
+    /// # Parameters
+    /// - `refund_id` — The unique identifier of the refund to look up.
+    ///
+    /// # Returns
+    /// The [`RefundStatus`] of the refund: `Pending`, `Approved`, `Rejected`,
+    /// or `Completed`.
+    ///
+    /// # Errors
+    /// - [`PaymentError::RefundNotFound`] if no refund exists for `refund_id`.
     pub fn get_refund_status(env: Env, refund_id: Bytes) -> Result<RefundStatus, PaymentError> {
         let refund =
             storage::get_refund(&env, &refund_id).ok_or(PaymentError::RefundNotFound)?;
