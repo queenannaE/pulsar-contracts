@@ -9,6 +9,11 @@ Pulsar is a comprehensive payment-processing smart contract for the Stellar Soro
 
 ---
 
+## Security and Rewards
+
+See the [Security Policy](SECURITY.md) for private vulnerability reporting,
+coordinated disclosure, and the current [rewards and recognition policy](SECURITY.md#rewards).
+
 ## SDK & Integrator Resources
 
 | Resource | Description |
@@ -44,6 +49,7 @@ Pulsar is a comprehensive payment-processing smart contract for the Stellar Soro
 - [Storage Costs](#storage-costs)
 - [Roadmap](#roadmap)
 - [Known Limitations](#known-limitations)
+- [Security and Rewards](#security-and-rewards)
 - [Contributing](#contributing)
 - [Code of Conduct](#code-of-conduct)
 - [License](#license)

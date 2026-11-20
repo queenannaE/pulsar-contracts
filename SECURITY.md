@@ -51,6 +51,31 @@ maintainers a reasonable window (default 90 days, or until a fix is shipped —
 whichever comes first) before publicly disclosing the issue. We will not
 take action against good-faith security research that respects this window.
 
+## Rewards
+
+Pulsar does not currently operate a funded bug bounty or responsible-disclosure
+reward program. Reports submitted under this policy are therefore not eligible
+for a guaranteed monetary payment.
+
+With the reporter's consent, we may recognize valid reports through:
+
+- acknowledgement in the release notes;
+- inclusion in a future security Hall of Fame; and
+- credit in the relevant security advisory or fix announcement.
+
+After mainnet launch, the maintainers may evaluate listing Pulsar on a bug
+bounty platform such as HackerOne or Immunefi. Any active listing, funding,
+eligibility rules, and payment terms will be linked from this section before
+they apply. Until then, do not assume that a report carries a monetary reward.
+
+### Scope of any future bounty program
+
+The current disclosure and recognition scope is limited to vulnerabilities in
+the smart contract code maintained in this repository. Off-chain services,
+infrastructure, SDKs, documentation, and third-party dependencies are not in
+scope unless a future program explicitly includes them. Issues in third-party
+dependencies should be reported to their respective maintainers.
+
 ## Scope
 
 This policy covers the smart contract code in this repository. Issues in third-party dependencies (e.g. `soroban-sdk`) should be reported to their respective maintainers.
