@@ -1004,7 +1004,11 @@ all tracked deployments.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), including the
+[Adding a Contract Function](CONTRIBUTING.md#adding-a-contract-function)
+guide and the
+[Adding / updating a translation](CONTRIBUTING.md#adding--updating-a-translation)
+guide for frontend i18n contributions.
 
 The `main` branch is protected: all changes require a pull request with at
 least 1 approving review and all CI checks passing. Direct pushes and

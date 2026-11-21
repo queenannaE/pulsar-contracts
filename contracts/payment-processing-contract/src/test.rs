@@ -2941,3 +2941,78 @@ fn test_t001_signature_for_wrong_order_rejected() {
         "Expected signature verification to fail when order_id differs, got Ok"
     );
 }
+
+// ── T-032: token allowlist disabled-mode tests (SEC-009) ──────────────────────
+
+/// When the token allowlist is disabled (the default), any token address
+/// must be accepted for payment, including one that was never added to the
+/// allowlist via `add_allowed_token`.
+#[test]
+fn test_payment_non_allowlisted_token_accepted_when_allowlist_disabled() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+
+    // Allowlist is disabled by default and `token` was never explicitly
+    // added via `add_allowed_token`.
+    assert_eq!(client.is_token_allowed(&token), false);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    let (_pk, sig) = sign_order(&env, &order);
+    let result = client.try_process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+
+    assert!(
+        result.is_ok(),
+        "expected payment with non-allowlisted token to succeed when allowlist is disabled, got {:?}",
+        result
+    );
+    assert_ne!(result, Err(Ok(PaymentError::TokenNotAllowed)));
+}
+
+/// Explicitly flipping the allowlist mode to disabled after enabling it
+/// still allows a non-allowlisted token.
+#[test]
+fn test_payment_non_allowlisted_token_accepted_after_allowlist_explicitly_disabled() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token, &payer, 5000);
+
+    // Enable then explicitly disable the allowlist; `token` is never added.
+    client.set_token_allowlist_mode(&admins(&env, &admin), &true);
+    client.set_token_allowlist_mode(&admins(&env, &admin), &false);
+
+    let order = make_order(&env, &merchant, &payer, &token);
+    let (_pk, sig) = sign_order(&env, &order);
+    let result = client.try_process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+
+    assert!(
+        result.is_ok(),
+        "expected payment to succeed once allowlist mode is disabled, got {:?}",
+        result
+    );
+    assert_ne!(result, Err(Ok(PaymentError::TokenNotAllowed)));
+}

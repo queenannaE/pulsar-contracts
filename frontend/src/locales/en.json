@@ -1,0 +1,17 @@
+{
+  "checkout": {
+    "title": "Checkout",
+    "order": "Order",
+    "amount": "Amount",
+    "token": "Token",
+    "connectWallet": "Connect Wallet",
+    "connected": "Connected",
+    "payNow": "Pay Now",
+    "submitting": "Submitting…",
+    "tryAgain": "Try again",
+    "freighterNotFound": "Freighter wallet extension not found. Please install it."
+  },
+  "admin": {
+    "freighterNotFound": "Freighter wallet extension not found."
+  }
+}

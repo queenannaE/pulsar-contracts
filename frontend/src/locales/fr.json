@@ -1,0 +1,17 @@
+{
+  "checkout": {
+    "title": "Paiement",
+    "order": "Commande",
+    "amount": "Montant",
+    "token": "Jeton",
+    "connectWallet": "Connecter le portefeuille",
+    "connected": "Connecté",
+    "payNow": "Payer maintenant",
+    "submitting": "Envoi en cours…",
+    "tryAgain": "Réessayer",
+    "freighterNotFound": "Extension de portefeuille Freighter introuvable. Veuillez l'installer."
+  },
+  "admin": {
+    "freighterNotFound": "Extension de portefeuille Freighter introuvable."
+  }
+}

@@ -90,6 +90,99 @@ your code:
 - **No unsafe**: do not use `unsafe` blocks.
 - **No std**: the contract crate is `#![no_std]`; keep it that way.
 
+## Adding a Contract Function
+
+Follow these steps when adding a new public entry-point to a Soroban
+contract (e.g. `contracts/payment-processing-contract`):
+
+1. **`types.rs`** — if the function introduces a new struct, enum, or
+   storage-key variant, define it here first. Reuse existing types where
+   possible.
+2. **`storage.rs`** — add a small accessor pair (`get_x` / `set_x`) for any
+   new piece of persistent state, following the existing pattern of one
+   function per storage key. Call `storage::bump_instance_ttl(&env)` from
+   the public entry-point, not from the accessor.
+3. **`error.rs`** — if the function can fail in a new way, add a variant to
+   `PaymentError` with the next free discriminant and a doc comment
+   explaining when it's returned and how to avoid it.
+4. **`lib.rs`** — add the `pub fn` to the `#[contractimpl]` block. Include:
+   - a doc comment describing behaviour and linking any related issue tag
+     (e.g. `SEC-009`, `MISC-XXX`),
+   - an `# Errors` section listing every `PaymentError` variant it can
+     return,
+   - an admin check (`helper::require_multi_admin`) if the function mutates
+     privileged state.
+5. **`test.rs`** (or a dedicated `*_tests.rs` file for larger features) —
+   add at least one success-path test and one failure-path test per new
+   error variant. Reuse the `setup()`, `make_order()`, `admins()` helpers
+   already defined near the top of `test.rs`.
+6. **`docs/contract-abi.json`** — add the new function's signature, inputs,
+   and outputs so off-chain consumers can discover it.
+7. **SDK regeneration** — if `sdk/` is generated from the ABI, re-run its
+   generation script (see `sdk/README.md`) so TypeScript/JS clients pick up
+   the new method.
+
+### Worked example: adding `set_merchant_tier`
+
+Suppose we want admins to set a merchant's tier:
+
+- `types.rs`: add `pub enum MerchantTier { Standard, Premium }` (if not
+  already present).
+- `storage.rs`: add `pub fn set_merchant_tier(env: &Env, merchant: &Address, tier: &MerchantTier)`
+  and `pub fn get_merchant_tier(env: &Env, merchant: &Address) -> MerchantTier`.
+- `error.rs`: add `MerchantNotFound = 72` if the merchant must already be
+  registered and the lookup can fail.
+- `lib.rs`: add
+  ```rust
+  pub fn set_merchant_tier(
+      env: Env,
+      admins: Vec<Address>,
+      merchant: Address,
+      tier: MerchantTier,
+  ) -> Result<(), PaymentError> {
+      storage::bump_instance_ttl(&env);
+      helper::require_multi_admin(&env, admins)?;
+      if !storage::merchant_exists(&env, &merchant) {
+          return Err(PaymentError::MerchantNotFound);
+      }
+      storage::set_merchant_tier(&env, &merchant, &tier);
+      Ok(())
+  }
+  ```
+- `test.rs`: add `test_set_merchant_tier_success` and
+  `test_set_merchant_tier_unknown_merchant_fails`.
+- `docs/contract-abi.json`: add the `set_merchant_tier` entry with its
+  parameter types.
+- Regenerate the SDK client so `client.setMerchantTier(...)` exists.
+
+See the [README](README.md#contributing) for a link back to this guide.
+
+## Adding / Updating a Translation
+
+The frontend (`frontend/`) uses [`react-i18next`](https://react.i18next.com/)
+for internationalisation. All translation strings live under
+`frontend/src/locales/<lang>.json`, keyed by feature area
+(e.g. `checkout.payNow`). `en.json` is the source of truth — every other
+locale file must have the exact same key structure.
+
+To add a new locale:
+
+1. Copy `frontend/src/locales/en.json` to `frontend/src/locales/<lang>.json`
+   and translate every value (never the keys).
+2. Register the new locale's `resources` entry in
+   `frontend/src/lib/i18n.ts`.
+3. Do not remove or rename a key in `en.json` without updating it in every
+   other locale file in the same PR — a missing key silently falls back to
+   English via `fallbackLng`.
+
+To add a new user-facing string in a component:
+
+1. Add the key to `frontend/src/locales/en.json` (and translate it in the
+   other locale files, or leave an English placeholder with a `// TODO`
+   comment if you don't speak the target language).
+2. In the component, call `const { t } = useTranslation();` and render
+   `t("area.key")` instead of a hardcoded string.
+
 ## Branch Protection Rules
 
 The `main` branch is protected with the following enforced settings:

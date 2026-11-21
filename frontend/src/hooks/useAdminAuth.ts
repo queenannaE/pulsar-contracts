@@ -20,7 +20,10 @@ export function useAdminAuth(adminAddress: string): AdminAuthState {
       alert("Freighter wallet extension not found.");
       return;
     }
-    await freighter.setAllowed();
+    const alreadyAllowed = await freighter.isAllowed?.();
+    if (!alreadyAllowed) {
+      await freighter.setAllowed();
+    }
     const pubKey: string = await freighter.getPublicKey();
     setAddress(pubKey);
   }

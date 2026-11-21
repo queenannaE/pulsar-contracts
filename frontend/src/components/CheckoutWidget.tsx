@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useContractCall } from "../hooks/useContractCall";
 import { Spinner, ErrorMessage, SuccessBanner } from "./ContractCallStatus";
 
@@ -44,16 +45,20 @@ export function CheckoutWidget({
   onSuccess,
   onError,
 }: CheckoutWidgetProps) {
+  const { t } = useTranslation();
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const { state, execute, reset } = useContractCall<null>();
 
   async function connectWallet() {
     const freighter = (window as any).freighter;
     if (!freighter) {
-      alert("Freighter wallet extension not found. Please install it.");
+      alert(t("checkout.freighterNotFound"));
       return;
     }
-    await freighter.setAllowed();
+    const alreadyAllowed = await freighter.isAllowed?.();
+    if (!alreadyAllowed) {
+      await freighter.setAllowed();
+    }
     const address = await freighter.getPublicKey();
     setWalletAddress(address);
   }
@@ -110,19 +115,19 @@ export function CheckoutWidget({
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 max-w-sm w-full shadow-sm space-y-4">
-      <h2 className="text-lg font-semibold text-[var(--color-text)]">Checkout</h2>
+      <h2 className="text-lg font-semibold text-[var(--color-text)]">{t("checkout.title")}</h2>
 
       <dl className="text-sm space-y-1 text-[var(--color-text-muted)]">
         <div className="flex justify-between">
-          <dt>Order</dt>
+          <dt>{t("checkout.order")}</dt>
           <dd className="font-mono text-[var(--color-text)]">{orderId}</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Amount</dt>
+          <dt>{t("checkout.amount")}</dt>
           <dd className="font-medium text-[var(--color-text)]">{amount}</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Token</dt>
+          <dt>{t("checkout.token")}</dt>
           <dd className="font-mono truncate max-w-[160px] text-[var(--color-text)]">{token}</dd>
         </div>
       </dl>
@@ -137,19 +142,23 @@ export function CheckoutWidget({
               onClick={connectWallet}
               className="w-full rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white py-2 px-4 text-sm font-medium transition-colors"
             >
-              Connect Wallet
+              {t("checkout.connectWallet")}
             </button>
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-[var(--color-text-muted)] truncate">
-                Connected: <span className="font-mono">{walletAddress}</span>
+                {t("checkout.connected")}: <span className="font-mono">{walletAddress}</span>
               </p>
               <button
                 onClick={handlePay}
                 disabled={state.status === "loading"}
                 className="w-full rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] disabled:opacity-50 text-white py-2 px-4 text-sm font-medium transition-colors flex items-center justify-center gap-2"
               >
-                {state.status === "loading" ? <Spinner label="Submitting…" /> : "Pay Now"}
+                {state.status === "loading" ? (
+                  <Spinner label={t("checkout.submitting")} />
+                ) : (
+                  t("checkout.payNow")
+                )}
               </button>
             </div>
           )}
@@ -158,7 +167,7 @@ export function CheckoutWidget({
 
       {state.status === "error" && (
         <button onClick={reset} className="text-xs text-[var(--color-text-muted)] underline">
-          Try again
+          {t("checkout.tryAgain")}
         </button>
       )}
     </div>
