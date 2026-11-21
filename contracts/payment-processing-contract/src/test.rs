@@ -1662,6 +1662,29 @@ fn test_initiate_multisig_duplicate_signer_fails() {
     );
 }
 
+/// SC-051: initiate_multisig_payment must reject a required_signers list
+/// larger than storage::MAX_SIGNERS to avoid excessive storage/resource usage.
+#[test]
+fn test_initiate_multisig_too_many_signers_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 5000);
+    let order = PaymentOrder { order_id: bytes(&env, "MS_TOOMANY"), merchant_address: merchant.clone(), payer: payer.clone(), token: token.clone(), amount: 1000, description: str(&env, "Multisig order"), expires_at: 0 };
+    let mut signers = Vec::new(&env);
+    for _ in 0..(crate::storage::MAX_SIGNERS + 1) {
+        signers.push_back(Address::generate(&env));
+    }
+    assert_eq!(
+        client.try_initiate_multisig_payment(&payer, &bytes(&env, "MS_TOOMANY"), &order, &signers),
+        Err(Ok(PaymentError::InvalidInput))
+    );
+}
+
 /// SC-025: initiate_multisig_payment must reject payments to a deactivated merchant.
 #[test]
 fn test_initiate_multisig_inactive_merchant_fails() {

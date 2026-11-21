@@ -712,6 +712,10 @@ impl PaymentContract {
         if order.payer != payer {
             return Err(PaymentError::InvalidInput);
         }
+        // SC-053: a merchant must not be able to pay themselves
+        if order.payer == order.merchant_address {
+            return Err(PaymentError::InvalidInput);
+        }
         helper::validate_amount(order.amount)?;
         helper::validate_order_id(&order.order_id)?;
         helper::validate_metadata(&order.metadata)?;

@@ -11,6 +11,19 @@ npm install
 npm run dev
 ```
 
+## Component catalogue (Storybook)
+
+```bash
+npm install
+npm run storybook
+```
+
+Opens an interactive catalogue of the UI components at `localhost:6006`,
+including stories for `CopyButton`, `ContractCallStatus`
+(Spinner/ErrorMessage/SuccessBanner), and `NotificationCenter`. Config lives
+in `.storybook/`; add a `*.stories.tsx` file next to a component to document
+it.
+
 ## Features
 - Freighter wallet connection
 - Paginated payment history table (cursor-based)
