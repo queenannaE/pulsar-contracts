@@ -8,6 +8,7 @@ const {
   CONTRACT_ID,
   DATABASE_URL,
   PORT = 3001,
+  START_LEDGER,
 } = process.env;
 
 const db = new Pool({ connectionString: DATABASE_URL });
@@ -45,6 +46,36 @@ async function getLastIndexedLedger() {
   return rows[0].last || 0;
 }
 
+/**
+ * Determine which ledger to resume polling from.
+ *
+ * If events already exist, resume right after the last indexed ledger
+ * (normal incremental behavior). If the table is empty — i.e. this is the
+ * indexer's first ever run — previously this fell through to ledger 1,
+ * meaning every event emitted before the indexer's first start was never
+ * backfilled (and ledger 1 is typically outside RPC retention anyway, so
+ * the very first poll would just error out).
+ *
+ * This resolves that by honoring START_LEDGER on an empty table, so
+ * operators can explicitly backfill from a known ledger (e.g. the
+ * contract's deployment ledger).
+ */
+async function resolveStartLedger() {
+  const lastIndexed = await getLastIndexedLedger();
+  if (lastIndexed > 0) {
+    return lastIndexed + 1;
+  }
+  if (START_LEDGER) {
+    const parsed = Number(START_LEDGER);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      console.log(`No prior events found. Backfilling from START_LEDGER=${parsed}`);
+      return parsed;
+    }
+    console.warn(`Ignoring invalid START_LEDGER value: ${START_LEDGER}`);
+  }
+  return lastIndexed + 1;
+}
+
 async function saveEvent(event) {
   await db.query(
     `INSERT INTO events (ledger, tx_hash, contract_id, event_type, topics, value)
@@ -63,7 +94,7 @@ async function saveEvent(event) {
 
 async function poll() {
   const server = new SorobanRpc.Server(HORIZON_URL);
-  const startLedger = (await getLastIndexedLedger()) + 1;
+  const startLedger = await resolveStartLedger();
 
   console.log(`Polling events from ledger ${startLedger} for contract ${CONTRACT_ID}`);
 

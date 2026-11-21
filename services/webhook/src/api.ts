@@ -2,7 +2,7 @@ import express from "express";
 import { registerWebhook, getWebhook, deleteWebhook } from "./store";
 import { checkDependencies, ComponentStatus } from "./health";
 import * as dlq from "./dlq";
-import { deliver } from "./deliver";
+import { deliver, checkReachable } from "./deliver";
 
 export function createRouter(rpcUrl: string, contractId: string): express.Router {
   const router = express.Router();
@@ -101,7 +101,7 @@ export function createRouter(rpcUrl: string, contractId: string): express.Router
   });
 
   // POST /webhooks — register or update a webhook URL for a merchant
-  router.post("/webhooks", (req, res) => {
+  router.post("/webhooks", async (req, res) => {
     const { merchantAddress, url } = req.body as { merchantAddress?: string; url?: string };
     if (!merchantAddress || !url) {
       res.status(400).json({ error: "merchantAddress and url are required" });
@@ -113,6 +113,19 @@ export function createRouter(rpcUrl: string, contractId: string): express.Router
       res.status(400).json({ error: "url is not a valid URL" });
       return;
     }
+
+    // Verify the registered URL is actually reachable before confirming
+    // registration — otherwise deliveries silently fail later and land in
+    // the DLQ with no feedback to the caller at registration time.
+    const reachable = await checkReachable(url);
+    if (!reachable) {
+      res.status(422).json({
+        error: "url is not reachable",
+        details: "A connectivity check (HEAD/GET) to the provided url failed or timed out. Ensure the endpoint is publicly accessible before registering it.",
+      });
+      return;
+    }
+
     const reg = registerWebhook(merchantAddress, url);
     res.status(201).json(reg);
   });

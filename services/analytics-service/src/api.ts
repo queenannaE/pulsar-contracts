@@ -41,10 +41,69 @@ function cacheKeyFor(req: Request): string {
   return `${req.path}?${sorted}`;
 }
 
+/** Postgres/network error codes that indicate the database is unreachable
+ *  rather than a problem with the query itself. */
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ECONNRESET",
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+  "08000", // connection_exception
+  "08003", // connection_does_not_exist
+  "08006", // connection_failure
+  "53300", // too_many_connections
+]);
+
+function isConnectionError(err: unknown): boolean {
+  const code = (err as { code?: string } | undefined)?.code;
+  return typeof code === "string" && CONNECTION_ERROR_CODES.has(code);
+}
+
+/** Sends a consistent error response, distinguishing DB-unreachable (503)
+ *  from other query/runtime failures (500) so clients and alerting can
+ *  tell the difference instead of seeing an opaque 500 for everything. */
+function respondWithDbError(res: Response, err: unknown, context: string): void {
+  if (isConnectionError(err)) {
+    console.error(`[analytics] Database connection failure during ${context}:`, err);
+    res.status(503).json({
+      error: "Database unavailable",
+      details: "The analytics database could not be reached. Please retry shortly.",
+    });
+    return;
+  }
+  console.error(`[analytics] Error during ${context}:`, err);
+  res.status(500).json({ error: `Failed to ${context}` });
+}
+
 export function createAnalyticsRouter(databaseUrl: string): express.Router {
   const router = express.Router();
   const db = new Pool({ connectionString: databaseUrl });
   const cache = new AnalyticsCache(cacheTtlFromEnv());
+
+  // Idle clients in the pool can emit async errors (e.g. the server
+  // dropping a backend connection) that are not tied to any in-flight
+  // query. Without this handler those errors crash the Node process.
+  db.on("error", (err) => {
+    console.error("[analytics] Unexpected error on idle database client:", err);
+  });
+
+  // GET /analytics/health — reports whether the database is reachable.
+  router.get("/analytics/health", async (_req, res) => {
+    try {
+      await db.query("SELECT 1");
+      res.status(200).json({ status: "ok", database: "reachable" });
+    } catch (err) {
+      if (isConnectionError(err)) {
+        res.status(503).json({ status: "unhealthy", database: "unreachable" });
+      } else {
+        res.status(500).json({ status: "unhealthy", database: "error" });
+      }
+    }
+  });
 
   router.get("/analytics/summary", async (req, res) => {
     try {
@@ -81,8 +140,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       });
       res.json(result);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to compute analytics summary" });
+      respondWithDbError(res, err, "compute analytics summary");
     }
   });
 
@@ -106,8 +164,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       });
       res.json(result);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to compute trends" });
+      respondWithDbError(res, err, "compute trends");
     }
   });
 
@@ -143,8 +200,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       });
       res.json(result);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to compute customer segments" });
+      respondWithDbError(res, err, "compute customer segments");
     }
   });
 
@@ -170,8 +226,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       const { rows } = await db.query(query, params);
       res.json({ report: rows });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to generate custom report" });
+      respondWithDbError(res, err, "generate custom report");
     }
   });
 
@@ -217,8 +272,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       });
       res.json(result);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to compute per-token breakdown" });
+      respondWithDbError(res, err, "compute per-token breakdown");
     }
   });
 
@@ -279,8 +333,7 @@ export function createAnalyticsRouter(databaseUrl: string): express.Router {
       });
       res.json(result);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to compute time-series aggregation" });
+      respondWithDbError(res, err, "compute time-series aggregation");
     }
   });
 

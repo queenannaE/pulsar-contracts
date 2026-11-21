@@ -1,0 +1,247 @@
+{
+  "info": {
+    "name": "Pulsar Contracts - Off-chain Services",
+    "description": "Manual API testing collection for Pulsar's off-chain services: the webhook service, the analytics service, and the indexer's REST API. Import this file into Postman, or open it directly in Bruno via its Postman-import support.\n\nEnvironment variables used (set them in a Postman environment named e.g. 'local'):\n- webhookBaseUrl (default http://localhost:3002)\n- analyticsBaseUrl (default http://localhost:3100)\n- indexerBaseUrl (default http://localhost:3001)\n- merchantAddress (a Stellar/Soroban address used as the test merchant)\n- dlqEntryId (populated after listing DLQ entries, used by the replay/discard requests)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "webhookBaseUrl", "value": "http://localhost:3002" },
+    { "key": "analyticsBaseUrl", "value": "http://localhost:3100" },
+    { "key": "indexerBaseUrl", "value": "http://localhost:3001" },
+    { "key": "merchantAddress", "value": "GA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAO4" },
+    { "key": "dlqEntryId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Webhook Service",
+      "item": [
+        {
+          "name": "Health - basic",
+          "request": {
+            "method": "GET",
+            "url": "{{webhookBaseUrl}}/health",
+            "description": "Shallow liveness check. Always returns 200 with uptime and unverified dependency status."
+          }
+        },
+        {
+          "name": "Health - deep (dependency check)",
+          "request": {
+            "method": "GET",
+            "url": "{{webhookBaseUrl}}/health/deep",
+            "description": "Actively checks database, RPC, and contract dependencies. Returns 503 if any component is unhealthy."
+          }
+        },
+        {
+          "name": "Health - liveness",
+          "request": { "method": "GET", "url": "{{webhookBaseUrl}}/health/liveness" }
+        },
+        {
+          "name": "Health - readiness",
+          "request": {
+            "method": "GET",
+            "url": "{{webhookBaseUrl}}/health/readiness",
+            "description": "Returns 200 'ready' only when all dependencies are healthy. Used for orchestrator readiness probes."
+          }
+        },
+        {
+          "name": "Health - metrics",
+          "request": { "method": "GET", "url": "{{webhookBaseUrl}}/health/metrics" }
+        },
+        {
+          "name": "Register webhook (reachable URL)",
+          "request": {
+            "method": "POST",
+            "url": "{{webhookBaseUrl}}/webhooks",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantAddress\": \"{{merchantAddress}}\",\n  \"url\": \"https://webhook.site/your-unique-id\"\n}"
+            },
+            "description": "Registers (or updates) the webhook endpoint for a merchant. The server performs a reachability check (HEAD, falling back to GET) against the URL before confirming registration; replace the example URL with a real endpoint (e.g. a webhook.site bin) or the request will be rejected with 422."
+          },
+          "response": [
+            { "name": "201 Created", "code": 201, "body": "{\n  \"merchantAddress\": \"GA3D...\",\n  \"url\": \"https://webhook.site/your-unique-id\",\n  \"createdAt\": \"2026-01-01T00:00:00.000Z\"\n}" },
+            { "name": "422 Unreachable", "code": 422, "body": "{\n  \"error\": \"url is not reachable\",\n  \"details\": \"A connectivity check (HEAD/GET) to the provided url failed or timed out. Ensure the endpoint is publicly accessible before registering it.\"\n}" }
+          ]
+        },
+        {
+          "name": "Register webhook (missing fields - 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{webhookBaseUrl}}/webhooks",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"merchantAddress\": \"{{merchantAddress}}\"\n}" },
+            "description": "Omits 'url' to exercise the 400 validation path."
+          }
+        },
+        {
+          "name": "Get webhook registration",
+          "request": {
+            "method": "GET",
+            "url": "{{webhookBaseUrl}}/webhooks/{{merchantAddress}}",
+            "description": "Returns 404 if no webhook has been registered for this merchant."
+          }
+        },
+        {
+          "name": "Delete webhook registration",
+          "request": {
+            "method": "DELETE",
+            "url": "{{webhookBaseUrl}}/webhooks/{{merchantAddress}}",
+            "description": "Returns 204 on success, 404 if nothing was registered."
+          }
+        },
+        {
+          "name": "Admin - list DLQ entries",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{webhookBaseUrl}}/admin/dlq?url_prefix=https://",
+              "query": [{ "key": "url_prefix", "value": "https://" }]
+            },
+            "description": "Lists failed webhook deliveries (newest first). Optional url_prefix filters by target URL. Copy an 'id' from the response into the dlqEntryId collection variable to use the replay/discard requests below."
+          }
+        },
+        {
+          "name": "Admin - inspect single DLQ entry",
+          "request": { "method": "GET", "url": "{{webhookBaseUrl}}/admin/dlq/{{dlqEntryId}}" }
+        },
+        {
+          "name": "Admin - replay DLQ entry",
+          "request": {
+            "method": "POST",
+            "url": "{{webhookBaseUrl}}/admin/dlq/{{dlqEntryId}}/replay",
+            "description": "Re-attempts delivery of a dead-lettered webhook. Removes the entry from the DLQ on success (200); on failure returns 502 and the entry remains for further retry."
+          }
+        },
+        {
+          "name": "Admin - discard DLQ entry",
+          "request": {
+            "method": "DELETE",
+            "url": "{{webhookBaseUrl}}/admin/dlq/{{dlqEntryId}}",
+            "description": "Permanently discards a failed delivery without replaying it."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics Service",
+      "item": [
+        {
+          "name": "Health (DB connectivity)",
+          "request": {
+            "method": "GET",
+            "url": "{{analyticsBaseUrl}}/analytics/health",
+            "description": "Runs SELECT 1 against the database. Returns 200 when reachable, 503 when the database connection fails (e.g. connection refused/timeout), 500 for other errors."
+          }
+        },
+        {
+          "name": "Summary",
+          "request": {
+            "method": "GET",
+            "url": "{{analyticsBaseUrl}}/analytics/summary",
+            "description": "Aggregate payment/refund counts, volumes, average transaction value, refund rate, and top 10 merchants by volume."
+          }
+        },
+        {
+          "name": "Trends",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{analyticsBaseUrl}}/analytics/trends?startDate=2024-01-01&endDate=2026-01-01",
+              "query": [
+                { "key": "startDate", "value": "2024-01-01" },
+                { "key": "endDate", "value": "2026-01-01" }
+              ]
+            },
+            "description": "Daily payment count/volume over the given date range (defaults to 2024-01-01..today if omitted)."
+          }
+        },
+        {
+          "name": "Customer segments",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{analyticsBaseUrl}}/analytics/segments?startDate=2024-01-01&endDate=2026-01-01",
+              "query": [
+                { "key": "startDate", "value": "2024-01-01" },
+                { "key": "endDate", "value": "2026-01-01" }
+              ]
+            },
+            "description": "Buckets customers into low/medium/high spend segments for the given range."
+          }
+        },
+        {
+          "name": "Custom report (payments)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{analyticsBaseUrl}}/analytics/custom-report?metric=payments&startDate=2024-01-01&endDate=2026-01-01",
+              "query": [
+                { "key": "metric", "value": "payments" },
+                { "key": "startDate", "value": "2024-01-01" },
+                { "key": "endDate", "value": "2026-01-01" }
+              ]
+            },
+            "description": "metric accepts 'payments' or 'refunds'; optionally filter with merchant_id=<address>."
+          }
+        },
+        {
+          "name": "Per-token breakdown",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{analyticsBaseUrl}}/analytics/tokens?startDate=2024-01-01&endDate=2026-01-01",
+              "query": [
+                { "key": "startDate", "value": "2024-01-01" },
+                { "key": "endDate", "value": "2026-01-01" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Time series (day)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{analyticsBaseUrl}}/analytics/timeseries?granularity=day&startDate=2024-01-01&endDate=2026-01-01",
+              "query": [
+                { "key": "granularity", "value": "day" },
+                { "key": "startDate", "value": "2024-01-01" },
+                { "key": "endDate", "value": "2026-01-01" }
+              ]
+            },
+            "description": "granularity accepts 'hour' | 'day' | 'week'. Optionally filter with token=<token-contract-id-or-'native'>."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Indexer API",
+      "item": [
+        {
+          "name": "List events",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{indexerBaseUrl}}/events?limit=50&offset=0",
+              "query": [
+                { "key": "limit", "value": "50" },
+                { "key": "offset", "value": "0" },
+                { "key": "type", "value": "payment_received", "disabled": true }
+              ]
+            },
+            "description": "Lists indexed contract events, most recent ledger first. Optional 'type' query param filters by event_type."
+          }
+        },
+        {
+          "name": "List events by type (path param)",
+          "request": {
+            "method": "GET",
+            "url": "{{indexerBaseUrl}}/events/payment_received",
+            "description": "Convenience route equivalent to /events?type=payment_received, capped at 50 rows."
+          }
+        }
+      ]
+    }
+  ]
+}

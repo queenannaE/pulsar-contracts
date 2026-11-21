@@ -89,3 +89,62 @@ function post(url: string, body: string): Promise<void> {
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const REACHABILITY_TIMEOUT_MS = 5_000;
+
+/**
+ * Check whether `url` is reachable before confirming a webhook registration.
+ *
+ * Sends a lightweight HEAD request (falling back to GET if the target
+ * rejects HEAD) with a short timeout. Returns true if the endpoint responds
+ * with any HTTP status (even 4xx/5xx — we only care that something is
+ * listening), false if the connection fails, times out, or the host cannot
+ * be resolved.
+ */
+export function checkReachable(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    const lib = parsed.protocol === "https:" ? https : http;
+    const attempt = (method: "HEAD" | "GET") => {
+      const req = lib.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname + parsed.search,
+          method,
+          timeout: REACHABILITY_TIMEOUT_MS,
+          headers: { "User-Agent": "pulsar-webhook/0.1" },
+        },
+        (res) => {
+          res.resume();
+          if (method === "HEAD" && res.statusCode && res.statusCode >= 400 && res.statusCode < 500) {
+            // Some servers don't support HEAD — retry with GET before giving up.
+            attempt("GET");
+            return;
+          }
+          resolve(true);
+        },
+      );
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.on("error", () => {
+        if (method === "HEAD") {
+          attempt("GET");
+        } else {
+          resolve(false);
+        }
+      });
+      req.end();
+    };
+    attempt("HEAD");
+  });
+}
