@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useContractCall } from "../hooks/useContractCall";
 import { Spinner, ErrorMessage, SuccessBanner } from "./ContractCallStatus";
+import { contract, server, NETWORK_PASSPHRASE } from "../contract";
+import { TransactionBuilder, Account, nativeToScVal, rpc } from "@stellar/stellar-sdk";
 
 export interface CheckoutWidgetProps {
   /** Merchant-assigned order identifier. */
@@ -62,8 +64,6 @@ export function CheckoutWidget({
     if (!walletAddress) return;
 
     await execute(async () => {
-      const freighter = (window as any).freighter;
-
       // Build the order payload
       const order = {
         order_id: orderId,
@@ -75,14 +75,8 @@ export function CheckoutWidget({
         expires_at: Math.floor(Date.now() / 1000) + 3600,
       };
 
-      // Sign the order with Freighter
-      const orderJson = JSON.stringify(order);
-      const { signedXDR } = await freighter.signTransaction(orderJson, {
-        network: "TESTNET",
-      });
-
-      // Submit to contract (replace with actual @stellar/stellar-sdk call)
-      const txHash = await submitPayment({ order, signature: signedXDR });
+      // Submit to contract using real @stellar/stellar-sdk invocation
+      const txHash = await submitPayment({ order });
 
       // Fire success callback inside the executor so the txHash is available
       // immediately and before React re-renders with the success state.
@@ -165,10 +159,97 @@ export function CheckoutWidget({
   );
 }
 
-/** Stub — replace with actual @stellar/stellar-sdk contract invocation. */
-async function submitPayment(_payload: {
-  order: object;
-  signature: string;
+/** Real @stellar/stellar-sdk contract invocation with Freighter signing and transaction polling. */
+export async function submitPayment(payload: {
+  order: {
+    order_id: string;
+    merchant_address: string;
+    payer: string;
+    token: string;
+    amount: number;
+    description?: string;
+    expires_at?: number;
+  };
+  signature?: string;
 }): Promise<string> {
-  throw new Error("submitPayment: not yet wired to contract SDK.");
+  const freighter = (window as any).freighter;
+  if (!freighter) {
+    throw new Error("Freighter wallet not found");
+  }
+
+  // 1. Build contract call operation for submit_payment
+  const callOp = contract.call(
+    "submit_payment",
+    nativeToScVal(payload.order.order_id, { type: "string" }),
+    nativeToScVal(payload.order.merchant_address, { type: "address" }),
+    nativeToScVal(payload.order.payer, { type: "address" }),
+    nativeToScVal(payload.order.token, { type: "address" }),
+    nativeToScVal(BigInt(payload.order.amount), { type: "i128" })
+  );
+
+  // 2. Fetch payer account sequence or create account object for preparation
+  let account: Account;
+  try {
+    account = await server.getAccount(payload.order.payer);
+  } catch {
+    account = new Account(payload.order.payer, "0");
+  }
+
+  // 3. Build transaction
+  const tx = new TransactionBuilder(account, {
+    fee: "100000",
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(callOp)
+    .setTimeout(300)
+    .build();
+
+  // 4. Prepare transaction with Soroban RPC
+  const preparedTx = await server.prepareTransaction(tx);
+
+  // 5. Sign with Freighter
+  const signResult = await freighter.signTransaction(preparedTx.toXDR(), {
+    networkPassphrase: NETWORK_PASSPHRASE,
+  });
+
+  const signedXDR =
+    typeof signResult === "string"
+      ? signResult
+      : signResult?.signedXDR ?? signResult?.signedTxXdr ?? payload.signature;
+
+  if (!signedXDR) {
+    throw new Error("Failed to sign transaction with Freighter");
+  }
+
+  const transactionToSend = TransactionBuilder.fromXDR(signedXDR, NETWORK_PASSPHRASE);
+
+  // 6. Send transaction
+  const sendResponse = await server.sendTransaction(transactionToSend);
+  if (sendResponse.status === "ERROR") {
+    throw new Error(
+      `Transaction submission failed: ${
+        (sendResponse as any).errorResult?.toXDR?.("base64") || "Submission error"
+      }`
+    );
+  }
+
+  const txHash = sendResponse.hash;
+
+  // 7. Poll transaction status until confirmed or failed
+  let attempts = 0;
+  const maxAttempts = 30;
+  while (attempts < maxAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const txStatus = await server.getTransaction(txHash);
+
+    if (txStatus.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+      return txHash;
+    }
+    if (txStatus.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error(`Transaction execution failed on ledger: ${txHash}`);
+    }
+    attempts++;
+  }
+
+  return txHash;
 }
