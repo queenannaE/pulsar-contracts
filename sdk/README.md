@@ -322,7 +322,10 @@ npm test         # runs the test suite
 
 ## Publishing to npm
 
-The package is published automatically by CI when a release tag is pushed.
+The package is published automatically by CI when a semver release tag
+(e.g. `v0.1.0`) is pushed. Publishing requires an `NPM_TOKEN` secret to be
+configured in the repository's GitHub Actions secrets.
+
 To publish manually:
 
 ```bash
@@ -330,6 +333,10 @@ cd sdk
 npm run build
 npm publish --access public
 ```
+
+> **Note:** the published package name is `@pulsar-contracts/sdk` (matching
+> the `name` field in `sdk/package.json`), so install it with
+> `npm install @pulsar-contracts/sdk`.
 
 ---
 

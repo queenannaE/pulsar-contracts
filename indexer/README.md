@@ -21,8 +21,14 @@ psql -U postgres -d pulsar_events -f schema.sql
 
 ```bash
 cp .env.example .env
-# Edit .env with your CONTRACT_ID and DATABASE_URL
+# Edit .env with your CONTRACT_ID, DATABASE_URL and INDEXER_API_KEY
 ```
+
+| Variable          | Description                                                        |
+|-------------------|--------------------------------------------------------------------|
+| `CONTRACT_ID`     | Pulsar contract address to index                                   |
+| `DATABASE_URL`    | PostgreSQL connection string                                       |
+| `INDEXER_API_KEY` | API key required by the REST API (sent as the `x-api-key` header)  |
 
 ### 3. Install & run
 
@@ -51,14 +57,20 @@ npm start
 | `GET /events`       | List events (query: `type`, `limit`, `offset`) |
 | `GET /events/:type` | List events filtered by type             |
 
+All `/events` endpoints require authentication. Send the key configured in
+`INDEXER_API_KEY` via the `x-api-key` header. Requests with a missing or
+invalid key are rejected with `HTTP 401 Unauthorized`.
+
 ### Example
 
 ```bash
 # All payment_processed events
-curl http://localhost:3001/events/payment_processed
+curl -H "x-api-key: $INDEXER_API_KEY" \
+  http://localhost:3001/events/payment_processed
 
 # Paginated
-curl "http://localhost:3001/events?limit=20&offset=0"
+curl -H "x-api-key: $INDEXER_API_KEY" \
+  "http://localhost:3001/events?limit=20&offset=0"
 ```
 
 ## Indexed Event Types
